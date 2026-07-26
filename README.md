@@ -80,6 +80,29 @@ Copy, move, and delete require confirmation. Merge combines list-valued fields,
 prompts for scalar conflicts (`e` enters a custom value), opens a final review
 form, and then saves to the selected address book before removing duplicates.
 
+The add, edit, and merge-review screens use a sectioned item editor covering
+the complete khard contact template: identity and structured names, kind,
+nicknames, dates, organizations, titles and roles, typed phone numbers and
+emails, structured postal addresses, categories, webpages, private `X-*`
+properties, and notes. Use `j`/`k` to navigate, `enter` to open a field popup,
+the highlighted `+ Add …` rows to append repeatable values, `ctrl+d` to remove a
+repeatable entry, and `ctrl+s` to save.
+
+Phone, email, and address entries use a single type selected from sensible
+vCard defaults. Extra type labels can be added to the shared configuration:
+
+```json
+{
+  "contact_types": {
+    "phone": ["satellite"],
+    "email": ["school"],
+    "address": ["vacation"]
+  }
+}
+```
+
+These values extend, rather than replace, the built-in type choices.
+
 ## Neomutt
 
 Either invocation can be used as a neomutt `query_command`:
