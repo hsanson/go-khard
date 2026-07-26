@@ -132,6 +132,9 @@ func Merge(cards []vcard.Card, scalarChoices map[string]string) vcard.Card {
 			if key == vcard.FieldUID || key == vcard.FieldRevision || key == vcard.FieldVersion {
 				continue
 			}
+			if key == vcard.FieldName {
+				continue
+			}
 			if isListField(key) {
 				seen := map[string]bool{}
 				for _, old := range out[key] {
@@ -154,9 +157,32 @@ func Merge(cards []vcard.Card, scalarChoices map[string]string) vcard.Card {
 			}
 		}
 	}
+	name := mergeName(cards)
 	for key, value := range scalarChoices {
-		if value != "" {
-			out.SetValue(key, value)
+		switch key {
+		case "name-prefix":
+			name.HonorificPrefix = value
+		case "name-first":
+			name.GivenName = value
+		case "name-additional":
+			name.AdditionalName = value
+		case "name-last":
+			name.FamilyName = value
+		case "name-suffix":
+			name.HonorificSuffix = value
+		default:
+			if value != "" {
+				out.SetValue(key, value)
+			}
+		}
+	}
+	if name.FamilyName != "" || name.GivenName != "" || name.AdditionalName != "" ||
+		name.HonorificPrefix != "" || name.HonorificSuffix != "" {
+		out.SetName(name)
+	}
+	for _, key := range []string{vcard.FieldBirthday, vcard.FieldAnniversary} {
+		if value := out.Value(key); value != "" {
+			out.SetValue(key, normalizedScalarValue(key, value))
 		}
 	}
 	out.SetValue(vcard.FieldUID, newID())
@@ -168,13 +194,25 @@ func Conflicts(cards []vcard.Card) map[string][]string {
 	all := map[string][]string{}
 	for _, c := range cards {
 		for k, fs := range c {
+			if k == vcard.FieldName {
+				continue
+			}
 			if isListField(k) || k == vcard.FieldUID || k == vcard.FieldRevision || k == vcard.FieldVersion {
 				continue
 			}
 			for _, f := range fs {
-				if f.Value != "" && !contains(all[k], f.Value) {
-					all[k] = append(all[k], f.Value)
+				value := normalizedScalarValue(k, f.Value)
+				if value != "" && !contains(all[k], value) {
+					all[k] = append(all[k], value)
 				}
+			}
+		}
+	}
+	for _, key := range []string{"name-prefix", "name-first", "name-additional", "name-last", "name-suffix"} {
+		for _, card := range cards {
+			value := nameComponent(card.Name(), key)
+			if value != "" && !contains(all[key], value) {
+				all[key] = append(all[key], value)
 			}
 		}
 	}
@@ -184,6 +222,59 @@ func Conflicts(cards []vcard.Card) map[string][]string {
 		}
 	}
 	return all
+}
+func normalizedScalarValue(key, value string) string {
+	value = strings.TrimSpace(value)
+	if key == vcard.FieldBirthday || key == vcard.FieldAnniversary {
+		if parsed, err := time.Parse("20060102", value); err == nil {
+			return parsed.Format("2006-01-02")
+		}
+	}
+	return value
+}
+func mergeName(cards []vcard.Card) *vcard.Name {
+	name := &vcard.Name{}
+	for _, card := range cards {
+		current := card.Name()
+		if current == nil {
+			continue
+		}
+		if name.HonorificPrefix == "" {
+			name.HonorificPrefix = current.HonorificPrefix
+		}
+		if name.GivenName == "" {
+			name.GivenName = current.GivenName
+		}
+		if name.AdditionalName == "" {
+			name.AdditionalName = current.AdditionalName
+		}
+		if name.FamilyName == "" {
+			name.FamilyName = current.FamilyName
+		}
+		if name.HonorificSuffix == "" {
+			name.HonorificSuffix = current.HonorificSuffix
+		}
+	}
+	return name
+}
+func nameComponent(name *vcard.Name, key string) string {
+	if name == nil {
+		return ""
+	}
+	switch key {
+	case "name-prefix":
+		return name.HonorificPrefix
+	case "name-first":
+		return name.GivenName
+	case "name-additional":
+		return name.AdditionalName
+	case "name-last":
+		return name.FamilyName
+	case "name-suffix":
+		return name.HonorificSuffix
+	default:
+		return ""
+	}
 }
 func isListField(key string) bool {
 	switch key {

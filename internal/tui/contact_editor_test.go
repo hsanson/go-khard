@@ -92,6 +92,62 @@ func TestShowUsesReadOnlyEditorAndEditShortcut(t *testing.T) {
 	}
 }
 
+func TestMergeConflictsAreResolvedSequentiallyBeforeReview(t *testing.T) {
+	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
+	first, second := make(vcard.Card), make(vcard.Card)
+	first.SetValue(vcard.FieldFormattedName, "Alex Sanson")
+	first.SetName(&vcard.Name{GivenName: "Alex", FamilyName: "Sanson"})
+	first.SetValue(vcard.FieldBirthday, "2000-01-01")
+	first.AddValue(vcard.FieldEmail, "shared@example.net")
+	second.SetValue(vcard.FieldFormattedName, "Alejandro Sanson")
+	second.SetName(&vcard.Name{GivenName: "Alejandro", FamilyName: "Sanson"})
+	second.SetValue(vcard.FieldBirthday, "2001-02-03")
+	second.AddValue(vcard.FieldEmail, "shared@example.net")
+	second.AddValue(vcard.FieldEmail, "other@example.net")
+	contacts := []contact.Contact{
+		{Card: first, Path: "/tmp/one/first.vcf", Book: book},
+		{Card: second, Path: "/tmp/one/second.vcf", Book: book},
+	}
+	m := &model{
+		books:    []config.Source{book},
+		contacts: contacts,
+		visible:  contacts,
+		selected: map[string]bool{contacts[0].Path: true, contacts[1].Path: true},
+	}
+	_ = m.startMerge()
+	if m.mode != modeConflict || m.conflictForm == nil || len(m.conflicts) != 3 {
+		t.Fatalf("merge did not open sequential conflicts: mode=%v conflicts=%#v", m.mode, m.conflicts)
+	}
+	for m.mode == modeConflict {
+		key := m.conflicts[m.conflictCursor]
+		values := m.conflictValues[key]
+		m.conflictValue = values[len(values)-1]
+		m.conflictForm.State = huh.StateCompleted
+		_, _ = m.updateActiveConflictForm(nil)
+	}
+	if m.mode != modeForm || len(m.form.merged) != 2 {
+		t.Fatalf("merge did not reach review form: mode=%v", m.mode)
+	}
+	if got := m.form.card.Value(vcard.FieldFormattedName); got != "Alejandro Sanson" {
+		t.Fatalf("selected formatted name = %q", got)
+	}
+	if got := m.form.card.Name().GivenName; got != "Alejandro" {
+		t.Fatalf("selected first name = %q", got)
+	}
+	if got := len(m.form.card.Values(vcard.FieldEmail)); got != 2 {
+		t.Fatalf("merged email count = %d", got)
+	}
+	foundBook := false
+	for _, row := range m.editorRows() {
+		if row.key == "addressbook" {
+			foundBook = true
+		}
+	}
+	if !foundBook {
+		t.Fatal("merge review does not expose target addressbook")
+	}
+}
+
 func TestActivePopupRoutesNavigationMessagesAndEscape(t *testing.T) {
 	first, second := "", ""
 	form := popup(huh.NewInput().Title("First").Value(&first), huh.NewInput().Title("Second").Value(&second))

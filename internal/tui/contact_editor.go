@@ -37,7 +37,7 @@ func (m *model) editorRows() []editorRow {
 		}
 	}
 
-	if m.mode == modeShow || (m.form.editing == nil && len(m.form.merged) == 0) {
+	if m.mode == modeShow || m.form.editing == nil {
 		section("storage", "Address book")
 		book := "(no addressbooks)"
 		if len(m.books) > 0 {

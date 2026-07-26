@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/emersion/go-vcard"
 	"github.com/hsanson/go-khard/internal/config"
 	"github.com/hsanson/go-khard/internal/contact"
@@ -242,11 +243,11 @@ func (m *model) saveForm() {
 	m.reload(err)
 }
 
-func (m *model) startMerge() {
+func (m *model) startMerge() tea.Cmd {
 	targets := m.targets()
 	if m.selectedCount() < 2 {
 		m.message = "select at least two contacts to merge"
-		return
+		return nil
 	}
 	books := map[string]bool{}
 	for _, c := range targets {
@@ -256,16 +257,16 @@ func (m *model) startMerge() {
 	if len(books) > 1 {
 		m.mode = modeBooks
 		m.bookCursor = 0
-		return
+		return nil
 	}
 	for i, b := range m.books {
 		if b.Path == targets[0].Book.Path {
 			m.bookCursor = i
 		}
 	}
-	m.prepareMerge(m.books[m.bookCursor])
+	return m.prepareMerge(m.books[m.bookCursor])
 }
-func (m *model) prepareMerge(book config.Source) {
+func (m *model) prepareMerge(book config.Source) tea.Cmd {
 	targets := m.targets()
 	cards := make([]vcard.Card, len(targets))
 	for i, c := range targets {
@@ -283,19 +284,54 @@ func (m *model) prepareMerge(book config.Source) {
 	if len(m.conflicts) > 0 {
 		m.mode = modeConflict
 		m.conflictCursor = 0
-		return
+		return m.openConflictForm()
 	}
 	m.finishMerge()
+	return nil
 }
-func (m *model) cycleConflict(key string, vals []string, delta int) {
-	idx := 0
-	for i, v := range vals {
-		if v == m.conflictChoice[key] {
-			idx = i
-		}
+func (m *model) openConflictForm() tea.Cmd {
+	if m.conflictCursor >= len(m.conflicts) {
+		m.conflictForm = nil
+		m.finishMerge()
+		return nil
 	}
-	idx = (idx + delta + len(vals)) % len(vals)
-	m.conflictChoice[key] = vals[idx]
+	key := m.conflicts[m.conflictCursor]
+	values := m.conflictValues[key]
+	m.conflictValue = values[0]
+	options := make([]huh.Option[string], 0, len(values))
+	for _, value := range values {
+		options = append(options, huh.NewOption(value, value))
+	}
+	m.conflictForm = popup(huh.NewSelect[string]().
+		Title(conflictLabel(key)).
+		Description("Select the value to keep").
+		Options(options...).
+		Value(&m.conflictValue))
+	return m.conflictForm.Init()
+}
+func (m *model) updateActiveConflictForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
+		m.conflictForm = nil
+		m.mode = modeList
+		m.op = opNone
+		return m, nil
+	}
+	updated, cmd := m.conflictForm.Update(msg)
+	if form, ok := updated.(*huh.Form); ok {
+		m.conflictForm = form
+	}
+	switch m.conflictForm.State {
+	case huh.StateAborted:
+		m.conflictForm = nil
+		m.mode = modeList
+		m.op = opNone
+	case huh.StateCompleted:
+		key := m.conflicts[m.conflictCursor]
+		m.conflictChoice[key] = m.conflictValue
+		m.conflictCursor++
+		return m, m.openConflictForm()
+	}
+	return m, cmd
 }
 func (m *model) finishMerge() {
 	targets := m.targets()
@@ -309,6 +345,25 @@ func (m *model) finishMerge() {
 	m.startForm(&c, targets)
 	m.form.editing = nil
 	m.form.book = m.bookCursor
+}
+
+func conflictLabel(key string) string {
+	labels := map[string]string{
+		vcard.FieldFormattedName: "Formatted name",
+		vcard.FieldKind:          "Kind",
+		"name-prefix":            "Prefix",
+		"name-first":             "First name",
+		"name-additional":        "Additional name",
+		"name-last":              "Last name",
+		"name-suffix":            "Suffix",
+		vcard.FieldAnniversary:   "Anniversary",
+		vcard.FieldBirthday:      "Birthday",
+		vcard.FieldNote:          "Note",
+	}
+	if label := labels[key]; label != "" {
+		return label
+	}
+	return key
 }
 
 type editorDone struct{ err error }

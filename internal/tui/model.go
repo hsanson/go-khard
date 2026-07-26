@@ -71,6 +71,8 @@ type model struct {
 	conflictValues                map[string][]string
 	conflictChoice                map[string]string
 	conflictCursor                int
+	conflictForm                  *huh.Form
+	conflictValue                 string
 }
 
 var accent = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
@@ -107,6 +109,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.mode == modeForm && m.form.activeForm != nil {
 		return m.updateActiveEditorForm(msg)
 	}
+	if m.mode == modeConflict && m.conflictForm != nil {
+		return m.updateActiveConflictForm(msg)
+	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -135,7 +140,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case modeConflict:
-		return m.updateConflict(k)
+		return m, nil
 	case modeCustom:
 		return m.updateCustom(k)
 	}
@@ -174,10 +179,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.startBookOperation(opCopy)
 	case "x":
 		m.startBookOperation(opMove)
-	case "d":
+	case "ctrl+d":
 		m.startConfirmation(opDelete)
 	case "M":
-		m.startMerge()
+		return m, m.startMerge()
 	}
 	m.clamp()
 	return m, nil
@@ -202,6 +207,7 @@ func (m *model) updateSearch(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 func (m *model) updateBooks(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch k.String() {
 	case "esc", "q":
 		m.mode = modeList
@@ -214,7 +220,7 @@ func (m *model) updateBooks(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.books) > 0 {
 			switch m.op {
 			case opMerge:
-				m.prepareMerge(m.books[m.bookCursor])
+				cmd = m.prepareMerge(m.books[m.bookCursor])
 			default:
 				m.mode = modeConfirm
 			}
@@ -226,7 +232,7 @@ func (m *model) updateBooks(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.bookCursor >= len(m.books) {
 		m.bookCursor = len(m.books) - 1
 	}
-	return m, nil
+	return m, cmd
 }
 func (m *model) updateConfirm(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
@@ -260,36 +266,6 @@ func (m *model) updateForm(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openEditorPopup(rows)
 	case "ctrl+d":
 		m.deleteEditorRow(rows)
-	}
-	return m, nil
-}
-func (m *model) updateConflict(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if len(m.conflicts) == 0 {
-		m.finishMerge()
-		return m, nil
-	}
-	key := m.conflicts[m.conflictCursor]
-	vals := m.conflictValues[key]
-	switch k.String() {
-	case "esc", "q":
-		m.mode = modeList
-		m.op = opNone
-	case "j", "down":
-		m.conflictCursor = (m.conflictCursor + 1) % len(m.conflicts)
-	case "k", "up":
-		m.conflictCursor = (m.conflictCursor - 1 + len(m.conflicts)) % len(m.conflicts)
-	case "h", "left":
-		m.cycleConflict(key, vals, -1)
-	case "l", "right", " ":
-		m.cycleConflict(key, vals, 1)
-	case "e":
-		m.search.SetValue(m.conflictChoice[key])
-		m.search.Prompt = "custom " + key + ": "
-		m.search.Focus()
-		m.mode = modeCustom
-		return m, textinput.Blink
-	case "enter":
-		m.finishMerge()
 	}
 	return m, nil
 }
@@ -337,7 +313,7 @@ func (m *model) listView() string {
 	if m.mode == modeSearch {
 		b.WriteString(" " + m.search.View() + "\n")
 	} else {
-		b.WriteString(dim.Render(" / search   space select   enter show   a add   e edit   ctrl-e editor   c copy   x move   d delete   M merge   q quit") + "\n")
+		b.WriteString(dim.Render(" / search   space select   enter show   a add   e edit   ctrl-e editor   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
 	}
 	nameW, bookW := max(16, (m.width*30)/100), max(10, (m.width*16)/100)
 	emailW := max(18, (m.width*28)/100)
@@ -387,21 +363,14 @@ func (m *model) confirmView() string {
 	return "\n  " + accent.Render("Confirm") + "\n\n  " + m.confirmText() + "\n\n  y/enter confirm · n/esc cancel"
 }
 func (m *model) conflictView() string {
-	var b strings.Builder
-	b.WriteString(accent.Render(" Resolve merge conflicts ") + "\n\n")
-	for i, k := range m.conflicts {
-		p := "  "
-		if i == m.conflictCursor {
-			p = "› "
-		}
-		line := fmt.Sprintf("%s%-12s %s", p, k, m.conflictChoice[k])
-		if i == m.conflictCursor {
-			line = selectedStyle.Render(line)
-		}
-		b.WriteString(line + "\n")
+	if m.conflictForm == nil {
+		return ""
 	}
-	b.WriteString("\n" + dim.Render(" j/k field · h/l choose · e custom value · enter review merge · esc cancel"))
-	return b.String()
+	progress := fmt.Sprintf(" Conflict %d of %d ", m.conflictCursor+1, len(m.conflicts))
+	header := accent.Render(" Resolve merge conflicts ") + "\n" + dim.Render(progress+"· j/k choose · enter accept · esc cancel")
+	popupWidth := min(64, max(30, m.width-8))
+	popup := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2).Width(popupWidth).Render(m.conflictForm.View())
+	return header + "\n" + lipgloss.Place(m.width, max(8, m.height-2), lipgloss.Center, lipgloss.Center, popup)
 }
 func (m *model) formView() string {
 	var b strings.Builder
