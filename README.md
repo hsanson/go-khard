@@ -4,6 +4,52 @@
 collections. It uses the same dependencies and configuration file as
 [`go-khal`](../go-khal), so calendars and address books can be configured once.
 
+## Installation
+
+Requirements:
+
+- Local vdir contact data, commonly synchronized by `vdirsyncer`
+- A terminal with alternate-screen and color support
+- `$VISUAL` or `$EDITOR` for manual vCard editing (`vi` is the fallback)
+
+### Install From Release Binaries
+
+Download the archive for your platform from the
+[GitHub releases page](https://github.com/hsanson/go-khard/releases).
+
+Release artifacts are named by version, operating system, and architecture. For
+example: `go-khard_v0.0.1_linux_amd64.tar.gz`,
+`go-khard_v0.0.1_darwin_arm64.tar.gz`, and
+`go-khard_v0.0.1_windows_amd64.zip`.
+
+Linux x86-64 example:
+
+```sh
+curl -LO https://github.com/hsanson/go-khard/releases/download/v0.0.1/go-khard_v0.0.1_linux_amd64.tar.gz
+curl -LO https://github.com/hsanson/go-khard/releases/download/v0.0.1/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf go-khard_v0.0.1_linux_amd64.tar.gz
+install -m 0755 go-khard ~/.local/bin/go-khard
+```
+
+Replace `v0.0.1` with the release you want to install.
+
+### Install From Source
+
+Source installs require Go 1.24.2 or newer:
+
+```sh
+go install github.com/hsanson/go-khard@latest
+```
+
+For a local checkout:
+
+```sh
+make install
+```
+
+Ensure the Go binary directory, usually `~/go/bin`, is in your `PATH`.
+
 ## Quick start
 
 ```sh
