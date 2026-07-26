@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -185,7 +184,11 @@ func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
 			}
 		}
 	}
-	m.form = formState{card: card, cursor: 1, book: book, editing: c, merged: merged}
+	path := ""
+	if c != nil {
+		path = c.Path
+	}
+	m.form = formState{card: card, cursor: 1, book: book, editing: c, merged: merged, path: path}
 	m.mode = modeForm
 }
 func (m *model) startShow(c *contact.Contact) {
@@ -199,7 +202,7 @@ func (m *model) startShow(c *contact.Contact) {
 			break
 		}
 	}
-	m.form = formState{card: contact.Clone(c.Card), cursor: 1, book: book, editing: c}
+	m.form = formState{card: contact.Clone(c.Card), cursor: 1, book: book, editing: c, path: c.Path}
 	m.mode = modeShow
 }
 func (m *model) saveForm() {
@@ -364,28 +367,6 @@ func conflictLabel(key string) string {
 		return label
 	}
 	return key
-}
-
-type editorDone struct{ err error }
-
-func (m *model) openEditor() tea.Cmd {
-	c := m.current()
-	if c == nil {
-		return nil
-	}
-	editor := strings.TrimSpace(m.cfg.Editor)
-	if editor == "" {
-		editor = os.Getenv("VISUAL")
-	}
-	if editor == "" {
-		editor = os.Getenv("EDITOR")
-	}
-	if editor == "" {
-		editor = "vi"
-	}
-	parts := strings.Fields(editor)
-	cmd := exec.Command(parts[0], append(parts[1:], c.Path)...)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg { return editorDone{err} })
 }
 
 func sortStrings(xs []string) {

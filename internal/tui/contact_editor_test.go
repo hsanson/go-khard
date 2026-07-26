@@ -74,21 +74,42 @@ func TestShowUsesReadOnlyEditorAndEditShortcut(t *testing.T) {
 		t.Fatalf("startShow() mode = %v", m.mode)
 	}
 	foundBook := false
-	for _, row := range m.editorRows() {
+	foundPath := false
+	showRows := m.editorRows()
+	for i, row := range showRows {
 		if row.add {
 			t.Fatalf("show view contains add row: %#v", row)
 		}
 		if row.key == "addressbook" {
 			foundBook = true
 		}
+		if row.key == "file-path" && row.value == entry.Path {
+			foundPath = true
+			m.form.cursor = i
+			if cmd := m.openEditorPopup(showRows); cmd != nil {
+				t.Fatal("file path row opened an editor")
+			}
+		}
 	}
 	if !foundBook {
 		t.Fatal("show view does not display addressbook")
+	}
+	if !foundPath {
+		t.Fatal("show view does not display vCard path")
 	}
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 	if m.mode != modeForm || m.form.editing == nil {
 		t.Fatalf("e did not switch show view to edit: mode=%v", m.mode)
+	}
+	foundPath = false
+	for _, row := range m.editorRows() {
+		if row.key == "file-path" && row.value == entry.Path {
+			foundPath = true
+		}
+	}
+	if !foundPath {
+		t.Fatal("edit view does not display vCard path")
 	}
 }
 

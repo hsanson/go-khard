@@ -49,6 +49,7 @@ type formState struct {
 	book       int
 	editing    *contact.Contact
 	merged     []contact.Contact
+	path       string
 	activeForm *huh.Form
 	activeRow  editorRow
 	tmp        []string
@@ -96,10 +97,6 @@ func Run(store *contact.Store, cfg *config.Config) error {
 }
 func (m *model) Init() tea.Cmd { return nil }
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if done, ok := msg.(editorDone); ok {
-		m.reload(done.err)
-		return m, nil
-	}
 	if w, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = w.Width
 		m.height = w.Height
@@ -173,8 +170,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if c := m.current(); c != nil {
 			m.startForm(c, nil)
 		}
-	case "ctrl+e":
-		return m, m.openEditor()
 	case "c":
 		m.startBookOperation(opCopy)
 	case "x":
@@ -313,7 +308,7 @@ func (m *model) listView() string {
 	if m.mode == modeSearch {
 		b.WriteString(" " + m.search.View() + "\n")
 	} else {
-		b.WriteString(dim.Render(" / search   space select   enter show   a add   e edit   ctrl-e editor   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
+		b.WriteString(dim.Render(" / search   space select   enter show   a add   e edit   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
 	}
 	nameW, bookW := max(16, (m.width*30)/100), max(10, (m.width*16)/100)
 	emailW := max(18, (m.width*28)/100)

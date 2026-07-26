@@ -17,6 +17,7 @@ var sectionIcons = map[string]string{
 	"identity": "󰀄", "nickname": "󰈉", "dates": "󰃭", "work": "󰃖", "title": "󰗴", "role": "󰓾", "phones": "󰏲",
 	"emails": "󰇮", "addresses": "󰍎", "categories": "󰓹", "online": "󰖟", "private": "󰌾",
 	"notes": "󰎞", "storage": "󰆼",
+	"file": "󰈔",
 }
 
 func (m *model) editorRows() []editorRow {
@@ -92,6 +93,10 @@ func (m *model) editorRows() []editorRow {
 
 	section("notes", "Notes")
 	scalar(vcard.FieldNote, "Note")
+	if m.form.path != "" {
+		section("file", "vCard file")
+		rows = append(rows, editorRow{key: "file-path", label: "Path", value: m.form.path})
+	}
 	return rows
 }
 
@@ -134,7 +139,7 @@ func (m *model) openEditorPopup(rows []editorRow) tea.Cmd {
 		return nil
 	}
 	row := rows[m.form.cursor]
-	if row.section {
+	if row.section || row.key == "file-path" {
 		return nil
 	}
 	m.form.activeRow = row
@@ -335,7 +340,7 @@ func (m *model) deleteEditorRow(rows []editorRow) {
 		return
 	}
 	row := rows[m.form.cursor]
-	if row.section || row.add || row.key == "addressbook" || row.key == vcard.FieldFormattedName ||
+	if row.section || row.add || row.key == "addressbook" || row.key == "file-path" || row.key == vcard.FieldFormattedName ||
 		row.key == vcard.FieldKind || row.key == vcard.FieldNote || row.key == vcard.FieldBirthday ||
 		row.key == vcard.FieldAnniversary || isNameKey(row.key) {
 		return

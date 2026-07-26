@@ -10,7 +10,6 @@ Requirements:
 
 - Local vdir contact data, commonly synchronized by `vdirsyncer`
 - A terminal with alternate-screen and color support
-- `$VISUAL` or `$EDITOR` for manual vCard editing (`vi` is the fallback)
 
 ### Install From Release Binaries
 
@@ -70,7 +69,6 @@ address book, email addresses, and phone numbers as columns.
 | `space` | select/unselect |
 | `enter` | show contact |
 | `a` / `e` | add/edit |
-| `ctrl-e` | edit raw vCard in `$VISUAL`, `$EDITOR`, or `vi` |
 | `c` / `x` | copy/move selected contacts |
 | `ctrl-d` | delete selected contacts |
 | `M` | merge two or more selected contacts |

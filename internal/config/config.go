@@ -27,7 +27,6 @@ type Config struct {
 	SidebarWidth              int          `json:"sidebar_width,omitempty"`
 	RecurrenceLookbackMonths  int          `json:"recurrence_lookback_months,omitempty"`
 	RecurrenceLookaheadMonths int          `json:"recurrence_lookahead_months,omitempty"`
-	Editor                    string       `json:"editor,omitempty"`
 	ContactTypes              ContactTypes `json:"contact_types,omitempty"`
 }
 
