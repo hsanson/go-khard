@@ -72,7 +72,7 @@ address book, email addresses, and phone numbers as columns.
 | `a` / `e` | add/edit |
 | `ctrl-e` | edit raw vCard in `$VISUAL`, `$EDITOR`, or `vi` |
 | `c` / `x` | copy/move selected contacts |
-| `d` | delete selected contacts |
+| `ctrl-d` | delete selected contacts |
 | `M` | merge two or more selected contacts |
 | `q` | quit |
 
