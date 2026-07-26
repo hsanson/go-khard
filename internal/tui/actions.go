@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/emersion/go-vcard"
 	"github.com/hsanson/go-khard/internal/config"
@@ -173,23 +172,9 @@ func (m *model) reload(err error) {
 }
 
 func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
-	keys := []string{vcard.FieldFormattedName, vcard.FieldEmail, vcard.FieldTelephone, vcard.FieldOrganization, vcard.FieldTitle, vcard.FieldAddress, vcard.FieldURL, vcard.FieldBirthday, vcard.FieldNote}
-	labels := []string{"Full name", "Emails", "Phones", "Organization", "Title", "Address", "URLs", "Birthday", "Notes"}
-	values := make([]textinput.Model, len(keys))
-	card := vcard.Card{}
+	card := make(vcard.Card)
 	if c != nil {
-		card = c.Card
-	}
-	for i, k := range keys {
-		in := textinput.New()
-		in.Prompt = ""
-		in.CharLimit = 2048
-		if k == vcard.FieldEmail || k == vcard.FieldTelephone || k == vcard.FieldURL {
-			in.SetValue(strings.Join(card.Values(k), ", "))
-		} else {
-			in.SetValue(card.Value(k))
-		}
-		values[i] = in
+		card = contact.Clone(c.Card)
 	}
 	book := 0
 	if c != nil {
@@ -199,19 +184,22 @@ func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
 			}
 		}
 	}
-	m.form = formState{fields: keys, labels: labels, values: values, focus: 0, book: book, editing: c, merged: merged}
-	m.form.base = contact.Clone(card)
+	m.form = formState{card: card, cursor: 1, book: book, editing: c, merged: merged}
 	m.mode = modeForm
-	m.focusForm()
 }
-func (m *model) focusForm() {
-	for i := range m.form.values {
-		if i == m.form.focus {
-			m.form.values[i].Focus()
-		} else {
-			m.form.values[i].Blur()
+func (m *model) startShow(c *contact.Contact) {
+	if c == nil {
+		return
+	}
+	book := 0
+	for i, candidate := range m.books {
+		if candidate.Path == c.Book.Path {
+			book = i
+			break
 		}
 	}
+	m.form = formState{card: contact.Clone(c.Card), cursor: 1, book: book, editing: c}
+	m.mode = modeShow
 }
 func (m *model) saveForm() {
 	if len(m.books) == 0 {
@@ -219,29 +207,16 @@ func (m *model) saveForm() {
 		m.mode = modeList
 		return
 	}
-	card := contact.Clone(m.form.base)
+	card := contact.Clone(m.form.card)
 	existing := ""
 	if m.form.editing != nil {
 		existing = m.form.editing.Path
 	}
-	for i, k := range m.form.fields {
-		value := strings.TrimSpace(m.form.values[i].Value())
-		delete(card, k)
-		if value == "" {
-			continue
-		}
-		if k == vcard.FieldEmail || k == vcard.FieldTelephone || k == vcard.FieldURL {
-			for _, v := range strings.Split(value, ",") {
-				if v = strings.TrimSpace(v); v != "" {
-					card.AddValue(k, v)
-				}
-			}
-		} else {
-			card.SetValue(k, value)
-		}
+	if strings.TrimSpace(card.Value(vcard.FieldFormattedName)) == "" {
+		card.SetValue(vcard.FieldFormattedName, formattedNameFromCard(card))
 	}
 	if strings.TrimSpace(card.Value(vcard.FieldFormattedName)) == "" {
-		m.message = "full name is required"
+		m.form.errMsg = "Formatted name or a name component is required"
 		return
 	}
 	book := m.books[m.form.book]

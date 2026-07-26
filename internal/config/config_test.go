@@ -22,3 +22,15 @@ func TestLoadsGoKhalSchema(t *testing.T) {
 		t.Fatalf("Addressbooks() = %#v", got)
 	}
 }
+
+func TestConfiguredContactTypesExtendDefaults(t *testing.T) {
+	cfg := Default()
+	cfg.ContactTypes.Phone = []string{"satellite", "HOME"}
+	cfg.ContactTypes.Email = []string{"school"}
+	if got := cfg.PhoneTypes(); got[len(got)-1] != "satellite" {
+		t.Fatalf("PhoneTypes() = %#v", got)
+	}
+	if got := cfg.EmailTypes(); got[len(got)-1] != "school" {
+		t.Fatalf("EmailTypes() = %#v", got)
+	}
+}

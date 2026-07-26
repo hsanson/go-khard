@@ -2,11 +2,11 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/emersion/go-vcard"
 	"github.com/hsanson/go-khard/internal/config"
@@ -36,13 +36,23 @@ const (
 	opMerge
 )
 
+type editorRow struct {
+	key, label, value string
+	index             int
+	section, add      bool
+}
+
 type formState struct {
-	fields, labels []string
-	values         []textinput.Model
-	focus, book    int
-	editing        *contact.Contact
-	merged         []contact.Contact
-	base           vcard.Card
+	card       vcard.Card
+	cursor     int
+	offset     int
+	book       int
+	editing    *contact.Contact
+	merged     []contact.Contact
+	activeForm *huh.Form
+	activeRow  editorRow
+	tmp        []string
+	errMsg     string
 }
 type model struct {
 	store                         *contact.Store
@@ -63,8 +73,10 @@ type model struct {
 	conflictCursor                int
 }
 
-var accent = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+var accent = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
 var dim = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+var fieldNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
+var fieldValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 var selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62"))
 
 func Run(store *contact.Store, cfg *config.Config) error {
@@ -92,6 +104,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clamp()
 		return m, nil
 	}
+	if m.mode == modeForm && m.form.activeForm != nil {
+		return m.updateActiveEditorForm(msg)
+	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
 		return m, nil
@@ -106,8 +121,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modeForm:
 		return m.updateForm(k)
 	case modeShow:
-		if k.String() == "esc" || k.String() == "q" || k.String() == "enter" {
+		switch k.String() {
+		case "esc", "q", "enter":
 			m.mode = modeList
+		case "j", "down":
+			m.moveEditorCursor(m.editorRows(), 1)
+		case "k", "up":
+			m.moveEditorCursor(m.editorRows(), -1)
+		case "e":
+			if m.form.editing != nil {
+				m.startForm(m.form.editing, nil)
+			}
 		}
 		return m, nil
 	case modeConflict:
@@ -116,7 +140,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCustom(k)
 	}
 	switch k.String() {
-	case "q", "ctrl+c":
+	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "j", "down":
 		m.cursor++
@@ -135,8 +159,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected[c.Path] = !m.selected[c.Path]
 		}
 	case "enter":
-		if m.current() != nil {
-			m.mode = modeShow
+		if c := m.current(); c != nil {
+			m.startShow(c)
 		}
 	case "a":
 		m.startForm(nil, nil)
@@ -154,9 +178,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.startConfirmation(opDelete)
 	case "M":
 		m.startMerge()
-	case "esc":
-		m.selected = map[string]bool{}
-		m.message = ""
 	}
 	m.clamp()
 	return m, nil
@@ -191,9 +212,10 @@ func (m *model) updateBooks(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.bookCursor--
 	case "enter":
 		if len(m.books) > 0 {
-			if m.op == opMerge {
+			switch m.op {
+			case opMerge:
 				m.prepareMerge(m.books[m.bookCursor])
-			} else {
+			default:
 				m.mode = modeConfirm
 			}
 		}
@@ -228,28 +250,18 @@ func (m *model) updateForm(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.saveForm()
 		return m, nil
 	}
-	if k.String() == "tab" || k.String() == "down" || k.String() == "ctrl+n" {
-		m.form.focus = (m.form.focus + 1) % (len(m.form.values) + 1)
-		m.focusForm()
-		return m, nil
+	rows := m.editorRows()
+	switch k.String() {
+	case "j", "down", "tab":
+		m.moveEditorCursor(rows, 1)
+	case "k", "up", "shift+tab":
+		m.moveEditorCursor(rows, -1)
+	case "enter":
+		return m, m.openEditorPopup(rows)
+	case "ctrl+d":
+		m.deleteEditorRow(rows)
 	}
-	if k.String() == "shift+tab" || k.String() == "up" || k.String() == "ctrl+p" {
-		m.form.focus = (m.form.focus + len(m.form.values)) % (len(m.form.values) + 1)
-		m.focusForm()
-		return m, nil
-	}
-	if m.form.focus == len(m.form.values) {
-		switch k.String() {
-		case "j", "right":
-			m.form.book = (m.form.book + 1) % max(1, len(m.books))
-		case "k", "left":
-			m.form.book = (m.form.book - 1 + max(1, len(m.books))) % max(1, len(m.books))
-		}
-		return m, nil
-	}
-	var cmd tea.Cmd
-	m.form.values[m.form.focus], cmd = m.form.values[m.form.focus].Update(k)
-	return m, cmd
+	return m, nil
 }
 func (m *model) updateConflict(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if len(m.conflicts) == 0 {
@@ -300,7 +312,7 @@ func (m *model) updateCustom(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 func (m *model) View() string {
 	if m.mode == modeShow {
-		return m.showView()
+		return m.formView()
 	}
 	if m.mode == modeForm {
 		return m.formView()
@@ -354,26 +366,6 @@ func (m *model) listView() string {
 	}
 	return b.String()
 }
-func (m *model) showView() string {
-	c := m.current()
-	if c == nil {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(accent.Render(" Contact details ") + "\n\n")
-	keys := make([]string, 0, len(c.Card))
-	for k := range c.Card {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		for _, f := range c.Card[k] {
-			fmt.Fprintf(&b, "  %-14s %s\n", k, f.Value)
-		}
-	}
-	b.WriteString("\n" + dim.Render(" enter/esc/q back"))
-	return b.String()
-}
 func (m *model) bookView() string {
 	var b strings.Builder
 	b.WriteString(accent.Render(" Select target addressbook ") + "\n\n")
@@ -414,29 +406,70 @@ func (m *model) conflictView() string {
 func (m *model) formView() string {
 	var b strings.Builder
 	title := "Add contact"
-	if m.form.editing != nil {
+	if m.mode == modeShow {
+		title = "Contact details"
+	} else if m.form.editing != nil {
 		title = "Edit contact"
 	}
 	if len(m.form.merged) > 0 {
 		title = "Review merged contact"
 	}
-	b.WriteString(accent.Render(" "+title+" ") + "\n\n")
-	for i, v := range m.form.values {
-		p := "  "
-		if i == m.form.focus {
-			p = "› "
+	b.WriteString(accent.Render(" "+title+" ") + "\n")
+	if m.mode == modeShow {
+		b.WriteString(dim.Render(" j/k navigate · e edit · enter/esc/q back") + "\n")
+	} else {
+		b.WriteString(dim.Render(" j/k navigate · enter edit · ctrl+d remove entry · ctrl+s save · esc cancel") + "\n")
+	}
+	rows := m.editorRows()
+	page := max(5, m.height-5)
+	if m.form.cursor < m.form.offset {
+		m.form.offset = m.form.cursor
+	}
+	if m.form.cursor >= m.form.offset+page {
+		m.form.offset = m.form.cursor - page + 1
+	}
+	for i := m.form.offset; i < min(len(rows), m.form.offset+page); i++ {
+		row := rows[i]
+		if row.section {
+			if i > m.form.offset {
+				b.WriteString("\n")
+			}
+			label := " " + row.label + " "
+			ruleWidth := max(0, m.width-lipgloss.Width(label)-2)
+			separator := lipgloss.NewStyle().Width(max(10, m.width)).Foreground(lipgloss.Color("244")).Bold(true).Render(label + strings.Repeat("─", ruleWidth))
+			b.WriteString(separator + "\n")
+			continue
 		}
-		fmt.Fprintf(&b, "%s%-14s %s\n", p, m.form.labels[i], v.View())
+		prefix := "  "
+		if i == m.form.cursor {
+			prefix = "› "
+		}
+		label := fieldNameStyle.Width(20).Render(row.label)
+		valueWidth := max(12, m.width-27)
+		valueLines := strings.Split(row.value, "\n")
+		line := fmt.Sprintf("%s%s: %s", prefix, label, fieldValueStyle.Render(clip(valueLines[0], valueWidth)))
+		if len(valueLines) > 1 {
+			indent := strings.Repeat(" ", lipgloss.Width(prefix)+20+2)
+			for _, valueLine := range valueLines[1:] {
+				line += "\n" + indent + fieldValueStyle.Render(clip(valueLine, valueWidth))
+			}
+		}
+		if row.add {
+			line = prefix + accent.Render(row.label)
+		}
+		if i == m.form.cursor {
+			line = selectedStyle.Render(line)
+		}
+		b.WriteString(line + "\n")
 	}
-	book := "(no addressbooks)"
-	if len(m.books) > 0 {
-		book = m.books[m.form.book].Name()
+	if m.form.errMsg != "" {
+		b.WriteString("\n " + lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.form.errMsg))
 	}
-	p := "  "
-	if m.form.focus == len(m.form.values) {
-		p = "› "
+	base := b.String()
+	if m.form.activeForm == nil {
+		return base
 	}
-	fmt.Fprintf(&b, "%s%-14s %s\n", p, "Addressbook", book)
-	b.WriteString("\n" + dim.Render(" tab/shift-tab fields · ctrl+s save · esc cancel"))
-	return b.String()
+	popupWidth := min(64, max(30, m.width-8))
+	popup := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2).Width(popupWidth).Render(m.form.activeForm.View())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup)
 }

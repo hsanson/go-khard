@@ -127,13 +127,12 @@ func Clone(card vcard.Card) vcard.Card {
 
 func Merge(cards []vcard.Card, scalarChoices map[string]string) vcard.Card {
 	out := make(vcard.Card)
-	listFields := map[string]bool{vcard.FieldEmail: true, vcard.FieldTelephone: true, vcard.FieldAddress: true, vcard.FieldURL: true, vcard.FieldNickname: true, vcard.FieldCategories: true}
 	for _, card := range cards {
 		for key, fields := range card {
 			if key == vcard.FieldUID || key == vcard.FieldRevision || key == vcard.FieldVersion {
 				continue
 			}
-			if listFields[key] {
+			if isListField(key) {
 				seen := map[string]bool{}
 				for _, old := range out[key] {
 					seen[old.Value] = true
@@ -166,11 +165,10 @@ func Merge(cards []vcard.Card, scalarChoices map[string]string) vcard.Card {
 }
 
 func Conflicts(cards []vcard.Card) map[string][]string {
-	list := map[string]bool{vcard.FieldEmail: true, vcard.FieldTelephone: true, vcard.FieldAddress: true, vcard.FieldURL: true, vcard.FieldNickname: true, vcard.FieldCategories: true, vcard.FieldUID: true, vcard.FieldRevision: true, vcard.FieldVersion: true}
 	all := map[string][]string{}
 	for _, c := range cards {
 		for k, fs := range c {
-			if list[k] {
+			if isListField(k) || k == vcard.FieldUID || k == vcard.FieldRevision || k == vcard.FieldVersion {
 				continue
 			}
 			for _, f := range fs {
@@ -186,6 +184,16 @@ func Conflicts(cards []vcard.Card) map[string][]string {
 		}
 	}
 	return all
+}
+func isListField(key string) bool {
+	switch key {
+	case vcard.FieldEmail, vcard.FieldTelephone, vcard.FieldAddress, vcard.FieldURL,
+		vcard.FieldNickname, vcard.FieldCategories, vcard.FieldOrganization,
+		vcard.FieldTitle, vcard.FieldRole:
+		return true
+	default:
+		return strings.HasPrefix(strings.ToUpper(key), "X-")
+	}
 }
 
 func clean(in []string) []string {

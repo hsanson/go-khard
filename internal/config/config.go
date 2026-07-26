@@ -20,14 +20,21 @@ type Source struct {
 }
 
 type Config struct {
-	Sources                   []Source `json:"sources"`
-	DefaultView               string   `json:"default_view,omitempty"`
-	WeekStartsOn              string   `json:"week_starts_on,omitempty"`
-	TimeFormat                string   `json:"time_format,omitempty"`
-	SidebarWidth              int      `json:"sidebar_width,omitempty"`
-	RecurrenceLookbackMonths  int      `json:"recurrence_lookback_months,omitempty"`
-	RecurrenceLookaheadMonths int      `json:"recurrence_lookahead_months,omitempty"`
-	Editor                    string   `json:"editor,omitempty"`
+	Sources                   []Source     `json:"sources"`
+	DefaultView               string       `json:"default_view,omitempty"`
+	WeekStartsOn              string       `json:"week_starts_on,omitempty"`
+	TimeFormat                string       `json:"time_format,omitempty"`
+	SidebarWidth              int          `json:"sidebar_width,omitempty"`
+	RecurrenceLookbackMonths  int          `json:"recurrence_lookback_months,omitempty"`
+	RecurrenceLookaheadMonths int          `json:"recurrence_lookahead_months,omitempty"`
+	Editor                    string       `json:"editor,omitempty"`
+	ContactTypes              ContactTypes `json:"contact_types,omitempty"`
+}
+
+type ContactTypes struct {
+	Phone   []string `json:"phone,omitempty"`
+	Email   []string `json:"email,omitempty"`
+	Address []string `json:"address,omitempty"`
 }
 
 func DefaultPath() string {
@@ -94,6 +101,30 @@ func (c *Config) Addressbooks() []Source {
 	for _, s := range c.Sources {
 		if s.Type == "addressbook" && !s.Hidden {
 			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (c *Config) PhoneTypes() []string {
+	return typeList([]string{"cell", "home", "work", "voice", "fax", "pager", "pref"}, c.ContactTypes.Phone)
+}
+func (c *Config) EmailTypes() []string {
+	return typeList([]string{"home", "work", "internet", "pref"}, c.ContactTypes.Email)
+}
+func (c *Config) AddressTypes() []string {
+	return typeList([]string{"home", "work", "pref"}, c.ContactTypes.Address)
+}
+func typeList(standard, configured []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, values := range [][]string{standard, configured} {
+		for _, value := range values {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value != "" && !seen[value] {
+				seen[value] = true
+				out = append(out, value)
+			}
 		}
 	}
 	return out

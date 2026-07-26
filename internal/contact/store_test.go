@@ -44,12 +44,17 @@ func TestMergeListsAndConflicts(t *testing.T) {
 	a.AddValue(vcard.FieldEmail, "ada@one.example")
 	b.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
 	b.AddValue(vcard.FieldEmail, "ada@two.example")
+	a.AddValue(vcard.FieldOrganization, "Engine Society;Research")
+	b.AddValue(vcard.FieldOrganization, "Royal Society;Mathematics")
+	a.AddValue("X-JABBER", "ada@chat.example")
+	b.AddValue("X-JABBER", "lovelace@chat.example")
 	conflicts := Conflicts([]vcard.Card{a, b})
 	if len(conflicts[vcard.FieldFormattedName]) != 2 {
 		t.Fatalf("missing name conflict: %#v", conflicts)
 	}
 	merged := Merge([]vcard.Card{a, b}, map[string]string{vcard.FieldFormattedName: "Ada Lovelace"})
-	if merged.Value(vcard.FieldFormattedName) != "Ada Lovelace" || len(merged.Values(vcard.FieldEmail)) != 2 {
+	if merged.Value(vcard.FieldFormattedName) != "Ada Lovelace" || len(merged.Values(vcard.FieldEmail)) != 2 ||
+		len(merged.Values(vcard.FieldOrganization)) != 2 || len(merged.Values("X-JABBER")) != 2 {
 		t.Fatalf("bad merge: %#v", merged)
 	}
 	if merged.Value(vcard.FieldUID) == "" {
