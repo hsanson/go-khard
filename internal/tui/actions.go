@@ -20,6 +20,9 @@ func (m *model) current() *contact.Contact {
 	return &m.visible[m.cursor]
 }
 func (m *model) targets() []contact.Contact {
+	if m.op == opMerge && len(m.mergeTargets) > 0 {
+		return m.mergeTargets
+	}
 	var out []contact.Contact
 	for _, c := range m.contacts {
 		if m.selected[c.Path] {
@@ -30,6 +33,36 @@ func (m *model) targets() []contact.Contact {
 		out = append(out, *m.current())
 	}
 	return out
+}
+
+func (m *model) updateEmailMatches(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	total := len(m.emailMatches) + 1
+	switch k.String() {
+	case "esc", "q", "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		m.emailMatchCursor = (m.emailMatchCursor + 1) % total
+	case "k", "up":
+		m.emailMatchCursor = (m.emailMatchCursor - 1 + total) % total
+	case "enter":
+		if m.emailMatchCursor == len(m.emailMatches) {
+			m.startForm(&m.emailSender, nil)
+			m.form.editing = nil
+			m.form.path = ""
+			return m, nil
+		}
+		existing := m.emailMatches[m.emailMatchCursor]
+		m.op = opMerge
+		m.mergeTargets = []contact.Contact{existing, m.emailSender}
+		for i, book := range m.books {
+			if book.Path == existing.Book.Path {
+				m.bookCursor = i
+				break
+			}
+		}
+		return m, m.prepareMerge(m.books[m.bookCursor])
+	}
+	return m, nil
 }
 func (m *model) selectedCount() int {
 	n := 0
@@ -251,11 +284,11 @@ func (m *model) startShow(c *contact.Contact) {
 	m.form = formState{card: contact.Clone(c.Card), cursor: 1, book: book, editing: c, path: c.Path}
 	m.mode = modeShow
 }
-func (m *model) saveForm() {
+func (m *model) saveForm() tea.Cmd {
 	if len(m.books) == 0 {
 		m.message = "no addressbooks configured"
 		m.mode = modeList
-		return
+		return nil
 	}
 	card := contact.Clone(m.form.card)
 	existing := ""
@@ -267,7 +300,7 @@ func (m *model) saveForm() {
 	}
 	if strings.TrimSpace(card.Value(vcard.FieldFormattedName)) == "" {
 		m.form.errMsg = "Formatted name or a name component is required"
-		return
+		return nil
 	}
 	book := m.books[m.form.book]
 	if m.form.editing != nil && m.form.editing.Book.Path != book.Path {
@@ -279,7 +312,7 @@ func (m *model) saveForm() {
 	}
 	if err == nil && len(m.form.merged) > 0 {
 		for _, c := range m.form.merged {
-			if c.Path != existing {
+			if c.Path != "" && c.Path != existing {
 				if e := m.store.Delete(c); e != nil && !os.IsNotExist(e) {
 					err = e
 					break
@@ -290,9 +323,14 @@ func (m *model) saveForm() {
 	m.mode = modeList
 	m.op = opNone
 	m.reload(err)
+	if err == nil && m.quitAfterSave {
+		return tea.Quit
+	}
+	return nil
 }
 
 func (m *model) startMerge() tea.Cmd {
+	m.mergeTargets = nil
 	targets := m.targets()
 	if m.selectedCount() < 2 {
 		m.message = "select at least two contacts to merge"
@@ -361,6 +399,9 @@ func (m *model) openConflictForm() tea.Cmd {
 func (m *model) updateActiveConflictForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
 		m.conflictForm = nil
+		if m.quitAfterSave {
+			return m, tea.Quit
+		}
 		m.mode = modeList
 		m.op = opNone
 		return m, nil
@@ -372,6 +413,9 @@ func (m *model) updateActiveConflictForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.conflictForm.State {
 	case huh.StateAborted:
 		m.conflictForm = nil
+		if m.quitAfterSave {
+			return m, tea.Quit
+		}
 		m.mode = modeList
 		m.op = opNone
 	case huh.StateCompleted:

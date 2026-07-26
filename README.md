@@ -117,3 +117,14 @@ set query_command = "go-khard query '%s'"
 # The shorthand is also accepted:
 # set query_command = "go-khard '%s'"
 ```
+
+To add the sender of the current message, bind a key to pipe the full message to
+`go-khard add-email`:
+
+```muttrc
+macro index,pager A "<pipe-message>go-khard add-email<enter>" "add sender to contacts"
+```
+
+go-khard searches for contacts with a similar name or email address. If it
+finds any, choose one to merge with the sender or choose `Create new`. The
+merge and contact forms close automatically after a successful save.

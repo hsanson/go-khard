@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/mail"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -25,6 +26,7 @@ const (
 	modeConflict
 	modeCustom
 	modeAddressbookFilter
+	modeEmailMatches
 )
 
 type operation int
@@ -78,6 +80,11 @@ type model struct {
 	conflictCursor                int
 	conflictForm                  *huh.Form
 	conflictValue                 string
+	emailSender                   contact.Contact
+	emailMatches                  []contact.Contact
+	emailMatchCursor              int
+	mergeTargets                  []contact.Contact
+	quitAfterSave                 bool
 }
 
 var accent = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
@@ -96,6 +103,40 @@ func Run(store *contact.Store, cfg *config.Config) error {
 	in.Placeholder = "name, email, or phone"
 	m := &model{store: store, cfg: cfg, contacts: contacts, selected: map[string]bool{}, search: in, books: cfg.Addressbooks(), conflictChoice: map[string]string{}}
 	m.filter()
+	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
+	return err
+}
+
+func RunAddEmail(store *contact.Store, cfg *config.Config, sender *mail.Address) error {
+	contacts, err := store.Load()
+	if err != nil {
+		return err
+	}
+	if len(cfg.Addressbooks()) == 0 {
+		return fmt.Errorf("no addressbooks configured")
+	}
+	card := make(vcard.Card)
+	name := strings.TrimSpace(sender.Name)
+	if name == "" {
+		name = sender.Address
+	}
+	card.SetValue(vcard.FieldFormattedName, name)
+	card.AddValue(vcard.FieldEmail, sender.Address)
+	in := textinput.New()
+	m := &model{
+		store: store, cfg: cfg, contacts: contacts, visible: contacts,
+		selected: map[string]bool{}, search: in, books: cfg.Addressbooks(),
+		conflictChoice: map[string]string{}, quitAfterSave: true,
+		emailSender:  contact.Contact{Card: card},
+		emailMatches: contact.SimilarContacts(contacts, sender.Name, sender.Address),
+	}
+	if len(m.emailMatches) == 0 {
+		m.startForm(&m.emailSender, nil)
+		m.form.editing = nil
+		m.form.path = ""
+	} else {
+		m.mode = modeEmailMatches
+	}
 	_, err = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -126,6 +167,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateConfirm(k)
 	case modeAddressbookFilter:
 		return m.updateAddressbookFilter(k)
+	case modeEmailMatches:
+		return m.updateEmailMatches(k)
 	case modeForm:
 		return m.updateForm(k)
 	case modeShow:
@@ -253,12 +296,14 @@ func (m *model) updateConfirm(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 func (m *model) updateForm(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "esc" {
+		if m.quitAfterSave {
+			return m, tea.Quit
+		}
 		m.mode = modeList
 		return m, nil
 	}
 	if k.String() == "ctrl+s" {
-		m.saveForm()
-		return m, nil
+		return m, m.saveForm()
 	}
 	rows := m.editorRows()
 	switch k.String() {
@@ -306,6 +351,9 @@ func (m *model) View() string {
 	if m.mode == modeAddressbookFilter {
 		return m.addressbookFilterView()
 	}
+	if m.mode == modeEmailMatches {
+		return m.emailMatchesView()
+	}
 	if m.mode == modeConflict {
 		return m.conflictView()
 	}
@@ -313,6 +361,26 @@ func (m *model) View() string {
 		return "\n  " + accent.Render("Enter a custom conflict value") + "\n\n  " + m.search.View() + "\n\n  enter accept · esc cancel"
 	}
 	return m.listView()
+}
+
+func (m *model) emailMatchesView() string {
+	var b strings.Builder
+	b.WriteString(accent.Render(" Similar contacts ") + "\n")
+	b.WriteString(dim.Render("Choose a contact to merge with the email sender, or create a new contact.") + "\n\n")
+	for i, candidate := range m.emailMatches {
+		line := "  " + candidate.Name() + "  " + dim.Render(candidate.PreferredEmail()+" · "+candidate.Book.Name())
+		if i == m.emailMatchCursor {
+			line = selectedStyle.Render("› " + strings.TrimPrefix(line, "  "))
+		}
+		b.WriteString(line + "\n")
+	}
+	createIndex := len(m.emailMatches)
+	line := "  Create new"
+	if m.emailMatchCursor == createIndex {
+		line = selectedStyle.Render("› Create new")
+	}
+	b.WriteString(line + "\n\n" + dim.Render(" j/k move · enter choose · esc cancel"))
+	return b.String()
 }
 func (m *model) listView() string {
 	var b strings.Builder

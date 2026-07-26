@@ -84,3 +84,47 @@ func TestControlDDeletesAndPlainDIsUnbound(t *testing.T) {
 		t.Fatalf("ctrl+d did not start deletion: mode=%v op=%v", m.mode, m.op)
 	}
 }
+
+func TestAddEmailMatchSelectionStartsMerge(t *testing.T) {
+	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
+	existingCard := make(vcard.Card)
+	existingCard.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+	senderCard := make(vcard.Card)
+	senderCard.SetValue(vcard.FieldFormattedName, "Ada Byron")
+	senderCard.AddValue(vcard.FieldEmail, "ada@example.net")
+	existing := contact.Contact{Card: existingCard, Path: "/tmp/one/ada.vcf", Book: book}
+	m := &model{
+		mode: modeEmailMatches, books: []config.Source{book},
+		emailMatches: []contact.Contact{existing},
+		emailSender:  contact.Contact{Card: senderCard},
+		selected:     map[string]bool{},
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeConflict && m.mode != modeForm {
+		t.Fatalf("selecting match did not start merge: mode=%v", m.mode)
+	}
+	if len(m.mergeTargets) != 2 || m.mergeTargets[0].Path != existing.Path {
+		t.Fatalf("merge targets = %#v", m.mergeTargets)
+	}
+}
+
+func TestAddEmailCreateNewPrefillsSender(t *testing.T) {
+	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+	card.AddValue(vcard.FieldEmail, "ada@example.net")
+	m := &model{
+		mode: modeEmailMatches, books: []config.Source{book},
+		emailMatches:     []contact.Contact{{Card: make(vcard.Card)}},
+		emailMatchCursor: 1,
+		emailSender:      contact.Contact{Card: card},
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeForm || m.form.editing != nil {
+		t.Fatalf("Create new mode=%v editing=%#v", m.mode, m.form.editing)
+	}
+	if m.form.card.Value(vcard.FieldFormattedName) != "Ada Lovelace" ||
+		m.form.card.Value(vcard.FieldEmail) != "ada@example.net" {
+		t.Fatalf("prefilled card = %#v", m.form.card)
+	}
+}

@@ -39,6 +39,60 @@ func (c Contact) SearchText() string {
 	return strings.ToLower(strings.Join(append(append([]string{c.Name()}, c.Emails()...), c.Phones()...), " "))
 }
 
+func SimilarContacts(contacts []Contact, name, email string) []Contact {
+	name = normalizedMatchText(name)
+	email = strings.ToLower(strings.TrimSpace(email))
+	local := email
+	if at := strings.LastIndexByte(local, '@'); at >= 0 {
+		local = local[:at]
+	}
+	var out []Contact
+	for _, candidate := range contacts {
+		similar := false
+		for _, existing := range candidate.Emails() {
+			existing = strings.ToLower(strings.TrimSpace(existing))
+			existingLocal := existing
+			if at := strings.LastIndexByte(existingLocal, '@'); at >= 0 {
+				existingLocal = existingLocal[:at]
+			}
+			if existing == email || (local != "" && existingLocal == local) {
+				similar = true
+				break
+			}
+		}
+		candidateName := normalizedMatchText(candidate.Name())
+		if !similar && name != "" && candidateName != "" {
+			similar = name == candidateName ||
+				strings.Contains(name, candidateName) ||
+				strings.Contains(candidateName, name) ||
+				sharesNameToken(name, candidateName)
+		}
+		if similar {
+			out = append(out, candidate)
+		}
+	}
+	return out
+}
+
+func normalizedMatchText(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func sharesNameToken(a, b string) bool {
+	tokens := map[string]bool{}
+	for _, token := range strings.Fields(a) {
+		if len([]rune(token)) >= 3 {
+			tokens[token] = true
+		}
+	}
+	for _, token := range strings.Fields(b) {
+		if tokens[token] && len([]rune(token)) >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
 func preferredContactValue(fields []*vcard.Field) string {
 	ranked := make([]*vcard.Field, 0, len(fields))
 	for _, field := range fields {

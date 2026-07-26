@@ -62,6 +62,23 @@ func TestMergeListsAndConflicts(t *testing.T) {
 	}
 }
 
+func TestSimilarContactsMatchesNamesAndEmailLocalParts(t *testing.T) {
+	cardByName := make(vcard.Card)
+	cardByName.SetValue(vcard.FieldFormattedName, "Ada Byron")
+	cardByName.AddValue(vcard.FieldEmail, "ada@old.example")
+	cardByEmail := make(vcard.Card)
+	cardByEmail.SetValue(vcard.FieldFormattedName, "Countess Lovelace")
+	cardByEmail.AddValue(vcard.FieldEmail, "other@example.net")
+	unrelated := make(vcard.Card)
+	unrelated.SetValue(vcard.FieldFormattedName, "Grace Hopper")
+	unrelated.AddValue(vcard.FieldEmail, "grace@example.net")
+
+	got := SimilarContacts([]Contact{{Card: cardByName}, {Card: cardByEmail}, {Card: unrelated}}, "Ada Lovelace", "ada@example.net")
+	if len(got) != 2 || got[0].Name() != "Ada Byron" || got[1].Name() != "Countess Lovelace" {
+		t.Fatalf("SimilarContacts() = %#v", got)
+	}
+}
+
 func TestMergeResolvesNameComponentsAndSingletons(t *testing.T) {
 	a, b := make(vcard.Card), make(vcard.Card)
 	a.SetName(&vcard.Name{GivenName: "Alex", FamilyName: "Sanson"})
