@@ -2,7 +2,7 @@
 
 `go-khard` is a keyboard-driven terminal address book for vdirsyncer vCard
 collections. It uses the same dependencies and configuration file as
-[`go-khal`](../go-khal), so calendars and address books can be configured once.
+[`go-khal`](https://github.com/hsanson/go-khal), so calendars and address books can be configured once.
 
 ## Installation
 
