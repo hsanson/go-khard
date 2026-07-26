@@ -368,7 +368,7 @@ func (m *model) showView() string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		for _, f := range c.Card[k] {
-			b.WriteString(fmt.Sprintf("  %-14s %s\n", k, f.Value))
+			fmt.Fprintf(&b, "  %-14s %s\n", k, f.Value)
 		}
 	}
 	b.WriteString("\n" + dim.Render(" enter/esc/q back"))
@@ -426,7 +426,7 @@ func (m *model) formView() string {
 		if i == m.form.focus {
 			p = "› "
 		}
-		b.WriteString(fmt.Sprintf("%s%-14s %s\n", p, m.form.labels[i], v.View()))
+		fmt.Fprintf(&b, "%s%-14s %s\n", p, m.form.labels[i], v.View())
 	}
 	book := "(no addressbooks)"
 	if len(m.books) > 0 {
@@ -436,7 +436,7 @@ func (m *model) formView() string {
 	if m.form.focus == len(m.form.values) {
 		p = "› "
 	}
-	b.WriteString(fmt.Sprintf("%s%-14s %s\n", p, "Addressbook", book))
+	fmt.Fprintf(&b, "%s%-14s %s\n", p, "Addressbook", book)
 	b.WriteString("\n" + dim.Render(" tab/shift-tab fields · ctrl+s save · esc cancel"))
 	return b.String()
 }

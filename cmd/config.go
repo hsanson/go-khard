@@ -71,7 +71,7 @@ func sourcesFromVdirsyncer(path string) ([]config.Source, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open vdirsyncer config: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var stores []storage
 	var cur *storage
 	sc := bufio.NewScanner(f)
