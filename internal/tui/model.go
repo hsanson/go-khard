@@ -213,7 +213,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if c := m.current(); c != nil {
 			m.startShow(c)
 		}
-	case "a":
+	case "n":
 		m.startForm(nil, nil)
 	case "b":
 		m.mode = modeAddressbookFilter
@@ -388,7 +388,7 @@ func (m *model) listView() string {
 	if m.mode == modeSearch {
 		b.WriteString(" " + m.search.View() + "\n")
 	} else {
-		b.WriteString(dim.Render(" / search   b addressbook   space select   enter show   a add   e edit   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
+		b.WriteString(dim.Render(" / search   b addressbook   space select   enter show   n new   e edit   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
 	}
 	nameW, bookW := max(16, (m.width*30)/100), max(10, (m.width*16)/100)
 	emailW := max(18, (m.width*28)/100)

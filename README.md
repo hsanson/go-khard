@@ -75,7 +75,7 @@ address book, email addresses, and phone numbers as columns.
 | `b` | filter by addressbook |
 | `space` | select/unselect |
 | `enter` | show contact |
-| `a` / `e` | add/edit |
+| `n` / `e` | new/edit |
 | `c` / `x` | copy/move selected contacts |
 | `ctrl-d` | delete selected contacts |
 | `M` | merge two or more selected contacts |

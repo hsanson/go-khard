@@ -85,6 +85,18 @@ func TestControlDDeletesAndPlainDIsUnbound(t *testing.T) {
 	}
 }
 
+func TestNewContactUsesNAndPlainAIsUnbound(t *testing.T) {
+	m := &model{mode: modeList}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if m.mode != modeList {
+		t.Fatalf("plain a opened new contact form: mode=%v", m.mode)
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.mode != modeForm || m.form.editing != nil {
+		t.Fatalf("n did not open new contact form: mode=%v editing=%#v", m.mode, m.form.editing)
+	}
+}
+
 func TestAddEmailMatchSelectionStartsMerge(t *testing.T) {
 	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
 	existingCard := make(vcard.Card)
