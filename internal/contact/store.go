@@ -29,8 +29,58 @@ func (c Contact) Name() string {
 }
 func (c Contact) Emails() []string { return clean(c.Card.Values(vcard.FieldEmail)) }
 func (c Contact) Phones() []string { return clean(c.Card.Values(vcard.FieldTelephone)) }
+func (c Contact) PreferredEmail() string {
+	return preferredContactValue(c.Card[vcard.FieldEmail])
+}
+func (c Contact) PreferredPhone() string {
+	return preferredContactValue(c.Card[vcard.FieldTelephone])
+}
 func (c Contact) SearchText() string {
 	return strings.ToLower(strings.Join(append(append([]string{c.Name()}, c.Emails()...), c.Phones()...), " "))
+}
+
+func preferredContactValue(fields []*vcard.Field) string {
+	ranked := make([]*vcard.Field, 0, len(fields))
+	for _, field := range fields {
+		if field != nil && strings.TrimSpace(field.Value) != "" {
+			ranked = append(ranked, field)
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		left, right := contactFieldScore(ranked[i]), contactFieldScore(ranked[j])
+		if left != right {
+			return left > right
+		}
+		leftValue := strings.ToLower(strings.TrimSpace(ranked[i].Value))
+		rightValue := strings.ToLower(strings.TrimSpace(ranked[j].Value))
+		if leftValue != rightValue {
+			return leftValue < rightValue
+		}
+		return ranked[i].Value < ranked[j].Value
+	})
+	if len(ranked) > 0 {
+		return strings.TrimSpace(ranked[0].Value)
+	}
+	return ""
+}
+
+func contactFieldScore(field *vcard.Field) int {
+	if field == nil {
+		return 0
+	}
+	scores := map[string]int{
+		"pref": 100,
+		"cell": 50,
+		"main": 40,
+		"work": 30,
+		"home": 20,
+		"fax":  -50,
+	}
+	score := 0
+	for _, typ := range field.Params.Types() {
+		score += scores[strings.ToLower(strings.TrimSpace(typ))]
+	}
+	return score
 }
 
 type Store struct{ Config *config.Config }

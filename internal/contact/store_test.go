@@ -83,3 +83,33 @@ func TestMergeResolvesNameComponentsAndSingletons(t *testing.T) {
 		t.Fatalf("merged name = %#v", got)
 	}
 }
+
+func TestPreferredContactValuesUseTypeScoreAndAlphabeticalTieBreak(t *testing.T) {
+	card := make(vcard.Card)
+	card.Add(vcard.FieldEmail, typedField("z-custom@example.net", "school"))
+	card.Add(vcard.FieldEmail, typedField("home@example.net", "home"))
+	card.Add(vcard.FieldEmail, typedField("work@example.net", "work"))
+	card.Add(vcard.FieldEmail, typedField("preferred@example.net", "pref"))
+	card.Add(vcard.FieldTelephone, typedField("+81-work", "work"))
+	card.Add(vcard.FieldTelephone, typedField("+81-cell-z", "cell"))
+	card.Add(vcard.FieldTelephone, typedField("+81-cell-a", "cell"))
+	card.Add(vcard.FieldTelephone, typedField("+81-fax", "fax"))
+	entry := Contact{Card: card}
+	if got := entry.PreferredEmail(); got != "preferred@example.net" {
+		t.Fatalf("PreferredEmail() = %q", got)
+	}
+	if got := entry.PreferredPhone(); got != "+81-cell-a" {
+		t.Fatalf("PreferredPhone() = %q", got)
+	}
+}
+
+func TestContactFieldScoreAddsMultipleTypes(t *testing.T) {
+	field := typedField("number", "pref", "fax", "work")
+	if got, want := contactFieldScore(field), 80; got != want {
+		t.Fatalf("contactFieldScore() = %d, want %d", got, want)
+	}
+}
+
+func typedField(value string, types ...string) *vcard.Field {
+	return &vcard.Field{Value: value, Params: vcard.Params{vcard.ParamType: types}}
+}
