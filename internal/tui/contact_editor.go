@@ -126,10 +126,12 @@ func (m *model) updateActiveEditorForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case huh.StateAborted:
 		m.form.activeForm = nil
 		m.form.tmp = nil
+		m.form.tmpTypes = nil
 	case huh.StateCompleted:
 		m.applyEditorPopup()
 		m.form.activeForm = nil
 		m.form.tmp = nil
+		m.form.tmpTypes = nil
 	}
 	return m, cmd
 }
@@ -144,6 +146,7 @@ func (m *model) openEditorPopup(rows []editorRow) tea.Cmd {
 	}
 	m.form.activeRow = row
 	m.form.tmp = nil
+	m.form.tmpTypes = nil
 	m.form.errMsg = ""
 	m.form.activeForm = m.buildEditorPopup(row)
 	if m.form.activeForm == nil {
@@ -225,21 +228,27 @@ func (m *model) typedPopup(row editorRow) *huh.Form {
 	if row.key == vcard.FieldEmail {
 		allowed = m.cfg.EmailTypes()
 	}
-	current := strings.ToLower(field.Params.Get(vcard.ParamType))
-	if current != "" && !containsString(allowed, current) {
-		allowed = append(allowed, current)
+	for _, current := range field.Params.Types() {
+		current = strings.ToLower(strings.TrimSpace(current))
+		if current == "" {
+			continue
+		}
+		m.form.tmpTypes = append(m.form.tmpTypes, current)
+		if !containsString(allowed, current) {
+			allowed = append(allowed, current)
+		}
 	}
-	m.form.tmp = []string{current, field.Value}
-	options := []huh.Option[string]{huh.NewOption("Unspecified", "")}
+	m.form.tmp = []string{field.Value}
+	options := make([]huh.Option[string], 0, len(allowed))
 	for _, value := range allowed {
 		options = append(options, huh.NewOption(value, value))
 	}
-	valueInput := huh.NewInput().Title("Value").Value(&m.form.tmp[1]).Validate(required("value"))
+	valueInput := huh.NewInput().Title("Value").Value(&m.form.tmp[0]).Validate(required("value"))
 	if row.key == vcard.FieldEmail {
 		valueInput.Validate(validEmail)
 	}
 	return popup(
-		huh.NewSelect[string]().Title("Type").Options(options...).Value(&m.form.tmp[0]),
+		huh.NewMultiSelect[string]().Title("Types").Description("Space toggles types; Enter accepts").Options(options...).Value(&m.form.tmpTypes),
 		valueInput,
 	)
 }
@@ -309,8 +318,8 @@ func (m *model) applyEditorPopup() {
 	field := &vcard.Field{}
 	switch row.key {
 	case vcard.FieldTelephone, vcard.FieldEmail:
-		field.Value = strings.TrimSpace(m.form.tmp[1])
-		setFieldType(field, m.form.tmp[0])
+		field.Value = strings.TrimSpace(m.form.tmp[0])
+		setFieldTypes(field, m.form.tmpTypes)
 	case vcard.FieldAddress:
 		if len(nonEmpty(m.form.tmp[1:]...)) == 0 {
 			return
@@ -487,6 +496,18 @@ func privateKeys(card vcard.Card) []string {
 func setFieldType(field *vcard.Field, typ string) {
 	if typ = strings.TrimSpace(typ); typ != "" {
 		field.Params = vcard.Params{vcard.ParamType: []string{typ}}
+	}
+}
+func setFieldTypes(field *vcard.Field, types []string) {
+	var values []string
+	for _, typ := range types {
+		typ = strings.ToLower(strings.TrimSpace(typ))
+		if typ != "" && !containsString(values, typ) {
+			values = append(values, typ)
+		}
+	}
+	if len(values) > 0 {
+		field.Params = vcard.Params{vcard.ParamType: values}
 	}
 }
 func removeField(fields []*vcard.Field, index int) []*vcard.Field {

@@ -24,6 +24,7 @@ const (
 	modeShow
 	modeConflict
 	modeCustom
+	modeAddressbookFilter
 )
 
 type operation int
@@ -53,6 +54,7 @@ type formState struct {
 	activeForm *huh.Form
 	activeRow  editorRow
 	tmp        []string
+	tmpTypes   []string
 	errMsg     string
 }
 type model struct {
@@ -66,6 +68,8 @@ type model struct {
 	search                        textinput.Model
 	books                         []config.Source
 	bookCursor                    int
+	filterBook                    string
+	filterBookCursor              int
 	form                          formState
 	message                       string
 	conflicts                     []string
@@ -120,6 +124,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateBooks(k)
 	case modeConfirm:
 		return m.updateConfirm(k)
+	case modeAddressbookFilter:
+		return m.updateAddressbookFilter(k)
 	case modeForm:
 		return m.updateForm(k)
 	case modeShow:
@@ -166,6 +172,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "a":
 		m.startForm(nil, nil)
+	case "b":
+		m.mode = modeAddressbookFilter
+		m.filterBookCursor = m.currentFilterBookCursor()
 	case "e":
 		if c := m.current(); c != nil {
 			m.startForm(c, nil)
@@ -294,6 +303,9 @@ func (m *model) View() string {
 	if m.mode == modeConfirm {
 		return m.confirmView()
 	}
+	if m.mode == modeAddressbookFilter {
+		return m.addressbookFilterView()
+	}
 	if m.mode == modeConflict {
 		return m.conflictView()
 	}
@@ -308,12 +320,13 @@ func (m *model) listView() string {
 	if m.mode == modeSearch {
 		b.WriteString(" " + m.search.View() + "\n")
 	} else {
-		b.WriteString(dim.Render(" / search   space select   enter show   a add   e edit   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
+		b.WriteString(dim.Render(" / search   b addressbook   space select   enter show   a add   e edit   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
 	}
 	nameW, bookW := max(16, (m.width*30)/100), max(10, (m.width*16)/100)
 	emailW := max(18, (m.width*28)/100)
 	phoneW := max(12, m.width-nameW-bookW-emailW-9)
-	b.WriteString(dim.Render(fmt.Sprintf("   %-*s %-*s %-*s %-*s", nameW, "NAME", bookW, "ADDRESSBOOK", emailW, "EMAIL", phoneW, "PHONE")) + "\n")
+	header := "   " + tableCell("NAME", nameW) + " " + tableCell("ADDRESSBOOK", bookW) + " " + tableCell("EMAIL", emailW) + " " + tableCell("PHONE", phoneW)
+	b.WriteString(dim.Render(header) + "\n")
 	end := min(len(m.visible), m.offset+m.pageSize())
 	for i := m.offset; i < end; i++ {
 		c := m.visible[i]
@@ -325,16 +338,43 @@ func (m *model) listView() string {
 		if i == m.cursor {
 			prefix = "›"
 		}
-		line := fmt.Sprintf("%s%s %-*s %-*s %-*s %-*s", prefix, mark, nameW, clip(c.Name(), nameW), bookW, clip(c.Book.Name(), bookW), emailW, clip(strings.Join(c.Emails(), ", "), emailW), phoneW, clip(strings.Join(c.Phones(), ", "), phoneW))
+		line := prefix + mark + " " +
+			tableCell(c.Name(), nameW) + " " +
+			tableCell(c.Book.Name(), bookW) + " " +
+			tableCell(c.PreferredEmail(), emailW) + " " +
+			tableCell(c.PreferredPhone(), phoneW)
 		if i == m.cursor {
 			line = selectedStyle.Render(line)
 		}
 		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n" + dim.Render(fmt.Sprintf(" %d contacts · %d selected", len(m.visible), m.selectedCount())))
+	b.WriteString(" · " + dim.Render("addressbook: "+m.filterBookName()))
 	if m.message != "" {
 		b.WriteString(" · " + m.message)
 	}
+	return b.String()
+}
+func (m *model) addressbookFilterView() string {
+	var b strings.Builder
+	b.WriteString(accent.Render(" Filter by addressbook ") + "\n\n")
+	options := append([]config.Source{{DisplayName: "All"}}, m.books...)
+	for i, book := range options {
+		prefix := "  "
+		if i == m.filterBookCursor {
+			prefix = "› "
+		}
+		label := book.Name()
+		if i == 0 {
+			label = "All"
+		}
+		line := prefix + label
+		if i == m.filterBookCursor {
+			line = selectedStyle.Render(line)
+		}
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("\n" + dim.Render(" j/k move · enter apply · esc cancel"))
 	return b.String()
 }
 func (m *model) bookView() string {

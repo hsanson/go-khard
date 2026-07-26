@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/emersion/go-vcard"
 	"github.com/hsanson/go-khard/internal/config"
 	"github.com/hsanson/go-khard/internal/contact"
@@ -59,12 +60,54 @@ func (m *model) filter() {
 	q := strings.ToLower(strings.TrimSpace(m.search.Value()))
 	m.visible = nil
 	for _, c := range m.contacts {
+		if m.filterBook != "" && c.Book.Path != m.filterBook {
+			continue
+		}
 		if q == "" || fuzzy(c.SearchText(), q) {
 			m.visible = append(m.visible, c)
 		}
 	}
 	m.cursor = 0
 	m.offset = 0
+}
+func (m *model) updateAddressbookFilter(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	total := len(m.books) + 1
+	switch k.String() {
+	case "esc", "q":
+		m.mode = modeList
+	case "j", "down":
+		m.filterBookCursor = (m.filterBookCursor + 1) % total
+	case "k", "up":
+		m.filterBookCursor = (m.filterBookCursor - 1 + total) % total
+	case "enter":
+		m.filterBook = ""
+		if m.filterBookCursor > 0 {
+			m.filterBook = m.books[m.filterBookCursor-1].Path
+		}
+		m.selected = map[string]bool{}
+		m.filter()
+		m.mode = modeList
+	}
+	return m, nil
+}
+func (m *model) currentFilterBookCursor() int {
+	for i, book := range m.books {
+		if book.Path == m.filterBook {
+			return i + 1
+		}
+	}
+	return 0
+}
+func (m *model) filterBookName() string {
+	if m.filterBook == "" {
+		return "All"
+	}
+	for _, book := range m.books {
+		if book.Path == m.filterBook {
+			return book.Name()
+		}
+	}
+	return "All"
 }
 func fuzzy(text, q string) bool {
 	i := 0
@@ -77,14 +120,17 @@ func fuzzy(text, q string) bool {
 	return i == len(query)
 }
 func clip(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
+	if n <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= n {
 		return s
 	}
-	if n <= 1 {
-		return string(r[:n])
-	}
-	return string(r[:n-1]) + "…"
+	return ansi.Truncate(s, n, "…")
+}
+func tableCell(s string, width int) string {
+	s = clip(s, width)
+	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
 }
 
 func (m *model) startBookOperation(op operation) {

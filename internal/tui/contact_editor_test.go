@@ -241,9 +241,11 @@ func TestNoteContinuationLinesAreIndented(t *testing.T) {
 func TestEditorAppliesStructuredAndTypedValues(t *testing.T) {
 	m := &model{form: formState{card: make(vcard.Card)}}
 	m.form.activeRow = editorRow{key: vcard.FieldEmail, add: true}
-	m.form.tmp = []string{"work", "ada@example.net"}
+	m.form.tmp = []string{"ada@example.net"}
+	m.form.tmpTypes = []string{"work", "internet"}
 	m.applyEditorPopup()
-	if got := m.form.card[vcard.FieldEmail][0]; got.Value != "ada@example.net" || got.Params.Get(vcard.ParamType) != "work" {
+	if got := m.form.card[vcard.FieldEmail][0]; got.Value != "ada@example.net" ||
+		len(got.Params.Types()) != 2 || got.Params.Types()[0] != "work" || got.Params.Types()[1] != "internet" {
 		t.Fatalf("email = %#v", got)
 	}
 
@@ -267,6 +269,19 @@ func TestEditorAppliesStructuredAndTypedValues(t *testing.T) {
 	m.applyEditorPopup()
 	if got := m.form.card.Value("X-JABBER"); got != "ada@example.net" {
 		t.Fatalf("private property = %q", got)
+	}
+}
+
+func TestTypedPopupPreservesMultipleAndUnknownTypes(t *testing.T) {
+	card := make(vcard.Card)
+	card.Add(vcard.FieldTelephone, &vcard.Field{
+		Value:  "+81-3-1234-5678",
+		Params: vcard.Params{vcard.ParamType: []string{"cell", "satellite"}},
+	})
+	m := &model{cfg: config.Default(), form: formState{card: card}}
+	_ = m.typedPopup(editorRow{key: vcard.FieldTelephone, index: 0})
+	if len(m.form.tmpTypes) != 2 || m.form.tmpTypes[0] != "cell" || m.form.tmpTypes[1] != "satellite" {
+		t.Fatalf("popup types = %#v", m.form.tmpTypes)
 	}
 }
 
