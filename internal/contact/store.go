@@ -1,0 +1,227 @@
+package contact
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/emersion/go-vcard"
+	"github.com/hsanson/go-khard/internal/config"
+)
+
+type Contact struct {
+	Card vcard.Card
+	Path string
+	Book config.Source
+}
+
+func (c Contact) Name() string {
+	if v := strings.TrimSpace(c.Card.Value(vcard.FieldFormattedName)); v != "" {
+		return v
+	}
+	return strings.TrimSpace(c.Card.Value(vcard.FieldOrganization))
+}
+func (c Contact) Emails() []string { return clean(c.Card.Values(vcard.FieldEmail)) }
+func (c Contact) Phones() []string { return clean(c.Card.Values(vcard.FieldTelephone)) }
+func (c Contact) SearchText() string {
+	return strings.ToLower(strings.Join(append(append([]string{c.Name()}, c.Emails()...), c.Phones()...), " "))
+}
+
+type Store struct{ Config *config.Config }
+
+func NewStore(cfg *config.Config) *Store { return &Store{Config: cfg} }
+
+func (s *Store) Load() ([]Contact, error) {
+	var out []Contact
+	for _, book := range s.Config.Addressbooks() {
+		entries, err := os.ReadDir(book.Path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s: %w", book.Path, err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".vcf") {
+				continue
+			}
+			path := filepath.Join(book.Path, e.Name())
+			f, err := os.Open(path)
+			if err != nil {
+				return nil, err
+			}
+			dec := vcard.NewDecoder(f)
+			for {
+				card, decodeErr := dec.Decode()
+				if decodeErr == io.EOF {
+					break
+				}
+				if decodeErr != nil {
+					_ = f.Close()
+					return nil, fmt.Errorf("decode %s: %w", path, decodeErr)
+				}
+				out = append(out, Contact{Card: card, Path: path, Book: book})
+			}
+			_ = f.Close()
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name()) < strings.ToLower(out[j].Name()) })
+	return out, nil
+}
+
+func (s *Store) Save(card vcard.Card, book config.Source, existing string) (string, error) {
+	if err := os.MkdirAll(book.Path, 0o755); err != nil {
+		return "", err
+	}
+	if card.Value(vcard.FieldVersion) == "" {
+		card.SetValue(vcard.FieldVersion, "4.0")
+	}
+	if card.Value(vcard.FieldUID) == "" {
+		card.SetValue(vcard.FieldUID, newID())
+	}
+	card.SetValue(vcard.FieldRevision, time.Now().UTC().Format("20060102T150405Z"))
+	path := existing
+	if path == "" || filepath.Clean(filepath.Dir(path)) != filepath.Clean(book.Path) {
+		path = filepath.Join(book.Path, safeName(card.Value(vcard.FieldUID))+".vcf")
+	}
+	tmp, err := os.CreateTemp(book.Path, ".go-khard-*.vcf")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err = vcard.NewEncoder(tmp).Encode(card); err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func (s *Store) Delete(c Contact) error { return os.Remove(c.Path) }
+
+func Clone(card vcard.Card) vcard.Card {
+	out := make(vcard.Card, len(card))
+	for k, fields := range card {
+		for _, f := range fields {
+			cp := *f
+			cp.Params = cloneParams(f.Params)
+			out[k] = append(out[k], &cp)
+		}
+	}
+	return out
+}
+
+func Merge(cards []vcard.Card, scalarChoices map[string]string) vcard.Card {
+	out := make(vcard.Card)
+	listFields := map[string]bool{vcard.FieldEmail: true, vcard.FieldTelephone: true, vcard.FieldAddress: true, vcard.FieldURL: true, vcard.FieldNickname: true, vcard.FieldCategories: true}
+	for _, card := range cards {
+		for key, fields := range card {
+			if key == vcard.FieldUID || key == vcard.FieldRevision || key == vcard.FieldVersion {
+				continue
+			}
+			if listFields[key] {
+				seen := map[string]bool{}
+				for _, old := range out[key] {
+					seen[old.Value] = true
+				}
+				for _, f := range fields {
+					if !seen[f.Value] {
+						cp := *f
+						cp.Params = cloneParams(f.Params)
+						out.Add(key, &cp)
+						seen[f.Value] = true
+					}
+				}
+			} else if len(out[key]) == 0 {
+				for _, f := range fields {
+					cp := *f
+					cp.Params = cloneParams(f.Params)
+					out.Add(key, &cp)
+				}
+			}
+		}
+	}
+	for key, value := range scalarChoices {
+		if value != "" {
+			out.SetValue(key, value)
+		}
+	}
+	out.SetValue(vcard.FieldUID, newID())
+	out.SetValue(vcard.FieldVersion, "4.0")
+	return out
+}
+
+func Conflicts(cards []vcard.Card) map[string][]string {
+	list := map[string]bool{vcard.FieldEmail: true, vcard.FieldTelephone: true, vcard.FieldAddress: true, vcard.FieldURL: true, vcard.FieldNickname: true, vcard.FieldCategories: true, vcard.FieldUID: true, vcard.FieldRevision: true, vcard.FieldVersion: true}
+	all := map[string][]string{}
+	for _, c := range cards {
+		for k, fs := range c {
+			if list[k] {
+				continue
+			}
+			for _, f := range fs {
+				if f.Value != "" && !contains(all[k], f.Value) {
+					all[k] = append(all[k], f.Value)
+				}
+			}
+		}
+	}
+	for k, values := range all {
+		if len(values) < 2 {
+			delete(all, k)
+		}
+	}
+	return all
+}
+
+func clean(in []string) []string {
+	var out []string
+	for _, v := range in {
+		if strings.TrimSpace(v) != "" {
+			out = append(out, strings.TrimSpace(v))
+		}
+	}
+	return out
+}
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+func cloneParams(in vcard.Params) vcard.Params {
+	out := make(vcard.Params, len(in))
+	for key, values := range in {
+		out[key] = append([]string(nil), values...)
+	}
+	return out
+}
+func newID() string { b := make([]byte, 16); _, _ = rand.Read(b); return hex.EncodeToString(b) }
+func safeName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == 0 {
+			return '-'
+		}
+		return r
+	}, s)
+	if s == "" {
+		return newID()
+	}
+	return s
+}

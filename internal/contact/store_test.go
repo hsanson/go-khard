@@ -1,0 +1,58 @@
+package contact
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/emersion/go-vcard"
+	"github.com/hsanson/go-khard/internal/config"
+)
+
+func TestSaveLoadAndDelete(t *testing.T) {
+	dir := t.TempDir()
+	book := config.Source{Path: dir, Type: "addressbook", DisplayName: "Personal"}
+	store := NewStore(&config.Config{Sources: []config.Source{book}})
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+	card.AddValue(vcard.FieldEmail, "ada@example.net")
+	path, err := store.Save(card, book, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Ext(path) != ".vcf" {
+		t.Fatalf("unexpected path %q", path)
+	}
+	got, err := store.Load()
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Load() = %v, %v", got, err)
+	}
+	if got[0].Name() != "Ada Lovelace" || got[0].Emails()[0] != "ada@example.net" {
+		t.Fatalf("unexpected contact: %#v", got[0])
+	}
+	if err := store.Delete(got[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("contact still exists: %v", err)
+	}
+}
+
+func TestMergeListsAndConflicts(t *testing.T) {
+	a, b := make(vcard.Card), make(vcard.Card)
+	a.SetValue(vcard.FieldFormattedName, "Ada L.")
+	a.AddValue(vcard.FieldEmail, "ada@one.example")
+	b.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+	b.AddValue(vcard.FieldEmail, "ada@two.example")
+	conflicts := Conflicts([]vcard.Card{a, b})
+	if len(conflicts[vcard.FieldFormattedName]) != 2 {
+		t.Fatalf("missing name conflict: %#v", conflicts)
+	}
+	merged := Merge([]vcard.Card{a, b}, map[string]string{vcard.FieldFormattedName: "Ada Lovelace"})
+	if merged.Value(vcard.FieldFormattedName) != "Ada Lovelace" || len(merged.Values(vcard.FieldEmail)) != 2 {
+		t.Fatalf("bad merge: %#v", merged)
+	}
+	if merged.Value(vcard.FieldUID) == "" {
+		t.Fatal("merged contact has no UID")
+	}
+}
