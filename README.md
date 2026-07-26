@@ -4,6 +4,12 @@
 collections. It uses the same dependencies and configuration file as
 [`go-khal`](https://github.com/hsanson/go-khal), so calendars and address books can be configured once.
 
+> [!WARNING]
+> go-khard is alpha software. Use it at your own risk: contact editing, moving,
+> merging, and deletion modify vCard files directly and may cause data loss.
+> Keep backups or use versioned/synchronized addressbooks before using it with
+> important contacts.
+
 ## Installation
 
 Requirements:
@@ -66,6 +72,7 @@ address book, email addresses, and phone numbers as columns.
 | --- | --- |
 | `j` / `k` | move |
 | `/` | fuzzy search |
+| `b` | filter by addressbook |
 | `space` | select/unselect |
 | `enter` | show contact |
 | `a` / `e` | add/edit |
@@ -86,8 +93,8 @@ properties, and notes. Use `j`/`k` to navigate, `enter` to open a field popup,
 the highlighted `+ Add …` rows to append repeatable values, `ctrl+d` to remove a
 repeatable entry, and `ctrl+s` to save.
 
-Phone, email, and address entries use a single type selected from sensible
-vCard defaults. Extra type labels can be added to the shared configuration:
+Phone and email entries allow multiple types, while address entries use a
+single type. Extra type labels can be added to the shared configuration:
 
 ```json
 {
