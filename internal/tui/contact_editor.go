@@ -33,12 +33,10 @@ func (m *model) editorRows() []editorRow {
 		for i, f := range card[key] {
 			rows = append(rows, editorRow{key: key, index: i, label: indexedLabel(label, f, i), value: displayField(key, f)})
 		}
-		if m.mode != modeShow {
-			rows = append(rows, editorRow{key: key, label: "󰐕 Add " + addLabel, add: true})
-		}
+		rows = append(rows, editorRow{key: key, label: "󰐕 Add " + addLabel, add: true})
 	}
 
-	if m.mode == modeShow || m.form.editing == nil {
+	if m.form.editing == nil {
 		section("storage", "Address book")
 		book := "(no addressbooks)"
 		if len(m.books) > 0 {
@@ -87,9 +85,7 @@ func (m *model) editorRows() []editorRow {
 			rows = append(rows, editorRow{key: key, index: i, label: strings.TrimPrefix(key, "X-"), value: f.Value})
 		}
 	}
-	if m.mode != modeShow {
-		rows = append(rows, editorRow{key: "private-add", label: "󰐕 Add private property", add: true})
-	}
+	rows = append(rows, editorRow{key: "private-add", label: "󰐕 Add private property", add: true})
 
 	section("notes", "Notes")
 	scalar(vcard.FieldNote, "Note")
@@ -106,10 +102,28 @@ func (m *model) moveEditorCursor(rows []editorRow, delta int) {
 	}
 	for range rows {
 		m.form.cursor = (m.form.cursor + delta + len(rows)) % len(rows)
-		if !rows[m.form.cursor].section {
+		if selectableEditorRow(rows[m.form.cursor]) {
 			return
 		}
 	}
+}
+
+func selectableEditorRow(row editorRow) bool {
+	return !row.section && row.key != "file-path"
+}
+
+func removableEditorRow(row editorRow) bool {
+	return selectableEditorRow(row) && !row.add && row.key != "addressbook" &&
+		row.key != vcard.FieldFormattedName && row.key != vcard.FieldKind && row.key != vcard.FieldNote &&
+		row.key != vcard.FieldBirthday && row.key != vcard.FieldAnniversary && !isNameKey(row.key)
+}
+
+func (m *model) currentEditorRow() (editorRow, bool) {
+	rows := m.editorRows()
+	if m.form.cursor < 0 || m.form.cursor >= len(rows) {
+		return editorRow{}, false
+	}
+	return rows[m.form.cursor], true
 }
 
 func (m *model) updateActiveEditorForm(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -141,7 +155,7 @@ func (m *model) openEditorPopup(rows []editorRow) tea.Cmd {
 		return nil
 	}
 	row := rows[m.form.cursor]
-	if row.section || row.key == "file-path" {
+	if !selectableEditorRow(row) {
 		return nil
 	}
 	m.form.activeRow = row
@@ -349,9 +363,7 @@ func (m *model) deleteEditorRow(rows []editorRow) {
 		return
 	}
 	row := rows[m.form.cursor]
-	if row.section || row.add || row.key == "addressbook" || row.key == "file-path" || row.key == vcard.FieldFormattedName ||
-		row.key == vcard.FieldKind || row.key == vcard.FieldNote || row.key == vcard.FieldBirthday ||
-		row.key == vcard.FieldAnniversary || isNameKey(row.key) {
+	if !removableEditorRow(row) {
 		return
 	}
 	m.form.card[row.key] = removeField(m.form.card[row.key], row.index)
@@ -360,10 +372,84 @@ func (m *model) deleteEditorRow(rows []editorRow) {
 	}
 	rows = m.editorRows()
 	m.form.cursor = min(m.form.cursor, len(rows)-1)
+	if len(rows) > 0 && !selectableEditorRow(rows[m.form.cursor]) {
+		m.moveEditorCursor(rows, 1)
+	}
+}
+
+// NewPreferredFormKeyMap uses j/k-first option navigation and ctrl+enter text newlines.
+func NewPreferredFormKeyMap() *huh.KeyMap {
+	keymap := huh.NewDefaultKeyMap()
+	keymap.Quit.SetKeys("ctrl+c", "esc")
+	keymap.Select.Up.SetHelp("k", "previous")
+	keymap.Select.Down.SetHelp("j", "next")
+	keymap.MultiSelect.Up.SetHelp("k", "previous")
+	keymap.MultiSelect.Down.SetHelp("j", "next")
+	keymap.FilePicker.Up.SetHelp("k", "previous")
+	keymap.FilePicker.Down.SetHelp("j", "next")
+	keymap.Confirm.Toggle.SetKeys("j", "k", "h", "l", "left", "right")
+	keymap.Confirm.Toggle.SetHelp("j/k", "toggle")
+	keymap.Text.NewLine.SetKeys("ctrl+enter")
+	keymap.Text.NewLine.SetHelp("ctrl+enter", "new line")
+	return keymap
+}
+
+// NewPreferredMultiFieldFormKeyMap uses ctrl+j/ctrl+k for field navigation.
+// Tab and shift+tab remain supported; enter advances and submits from final field.
+func NewPreferredMultiFieldFormKeyMap() *huh.KeyMap {
+	keymap := NewPreferredFormKeyMap()
+
+	keymap.Input.Next.SetKeys("enter", "tab", "ctrl+j")
+	keymap.Input.Next.SetHelp("ctrl+j", "next")
+	keymap.Input.Prev.SetKeys("shift+tab", "ctrl+k")
+	keymap.Input.Prev.SetHelp("ctrl+k", "previous")
+
+	keymap.Text.Next.SetKeys("enter", "tab", "ctrl+j")
+	keymap.Text.Next.SetHelp("ctrl+j", "next")
+	keymap.Text.Prev.SetKeys("shift+tab", "ctrl+k")
+	keymap.Text.Prev.SetHelp("ctrl+k", "previous")
+	keymap.Text.NewLine.SetKeys("ctrl+enter")
+	keymap.Text.NewLine.SetHelp("ctrl+enter", "new line")
+
+	keymap.Select.Next.SetKeys("enter", "tab", "ctrl+j")
+	keymap.Select.Next.SetHelp("ctrl+j", "next")
+	keymap.Select.Prev.SetKeys("shift+tab", "ctrl+k")
+	keymap.Select.Prev.SetHelp("ctrl+k", "previous")
+	keymap.Select.Up.SetKeys("up", "k", "ctrl+p")
+	keymap.Select.Down.SetKeys("down", "j", "ctrl+n")
+
+	keymap.MultiSelect.Next.SetKeys("enter", "tab", "ctrl+j")
+	keymap.MultiSelect.Next.SetHelp("ctrl+j", "next")
+	keymap.MultiSelect.Prev.SetKeys("shift+tab", "ctrl+k")
+	keymap.MultiSelect.Prev.SetHelp("ctrl+k", "previous")
+	keymap.MultiSelect.Up.SetKeys("up", "k", "ctrl+p")
+	keymap.MultiSelect.Down.SetKeys("down", "j", "ctrl+n")
+
+	keymap.Confirm.Next.SetKeys("enter", "tab", "ctrl+j")
+	keymap.Confirm.Next.SetHelp("ctrl+j", "next")
+	keymap.Confirm.Prev.SetKeys("shift+tab", "ctrl+k")
+	keymap.Confirm.Prev.SetHelp("ctrl+k", "previous")
+
+	keymap.Note.Next.SetKeys("enter", "tab", "ctrl+j")
+	keymap.Note.Next.SetHelp("ctrl+j", "next")
+	keymap.Note.Prev.SetKeys("shift+tab", "ctrl+k")
+	keymap.Note.Prev.SetHelp("ctrl+k", "previous")
+
+	keymap.FilePicker.Next.SetKeys("tab", "ctrl+j")
+	keymap.FilePicker.Next.SetHelp("ctrl+j", "next")
+	keymap.FilePicker.Prev.SetKeys("shift+tab", "ctrl+k")
+	keymap.FilePicker.Prev.SetHelp("ctrl+k", "previous")
+	keymap.FilePicker.Up.SetKeys("up", "k", "ctrl+p")
+	keymap.FilePicker.Down.SetKeys("down", "j", "ctrl+n")
+
+	return keymap
 }
 
 func popup(fields ...huh.Field) *huh.Form {
-	return huh.NewForm(huh.NewGroup(fields...)).WithShowHelp(true).WithShowErrors(true)
+	return huh.NewForm(huh.NewGroup(fields...)).
+		WithKeyMap(NewPreferredMultiFieldFormKeyMap()).
+		WithShowHelp(true).
+		WithShowErrors(true)
 }
 func required(label string) func(string) error {
 	return func(value string) error {

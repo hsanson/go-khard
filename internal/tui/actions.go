@@ -169,10 +169,12 @@ func tableCell(s string, width int) string {
 func (m *model) startBookOperation(op operation) {
 	if len(m.targets()) == 0 {
 		m.message = "no contact"
+		m.messageErr = true
 		return
 	}
 	if len(m.books) == 0 {
 		m.message = "no addressbooks configured"
+		m.messageErr = true
 		return
 	}
 	m.op = op
@@ -182,6 +184,7 @@ func (m *model) startBookOperation(op operation) {
 func (m *model) startConfirmation(op operation) {
 	if len(m.targets()) == 0 {
 		m.message = "no contact"
+		m.messageErr = true
 		return
 	}
 	m.op = op
@@ -236,11 +239,13 @@ func (m *model) executeOperation() error {
 func (m *model) reload(err error) {
 	if err != nil {
 		m.message = "error: " + err.Error()
+		m.messageErr = true
 		return
 	}
 	cs, e := m.store.Load()
 	if e != nil {
 		m.message = "error: " + e.Error()
+		m.messageErr = true
 		return
 	}
 	m.contacts = cs
@@ -248,6 +253,7 @@ func (m *model) reload(err error) {
 	m.search.SetValue("")
 	m.filter()
 	m.message = "saved"
+	m.messageErr = false
 }
 
 func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
@@ -270,23 +276,10 @@ func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
 	m.form = formState{card: card, cursor: 1, book: book, editing: c, merged: merged, path: path}
 	m.mode = modeForm
 }
-func (m *model) startShow(c *contact.Contact) {
-	if c == nil {
-		return
-	}
-	book := 0
-	for i, candidate := range m.books {
-		if candidate.Path == c.Book.Path {
-			book = i
-			break
-		}
-	}
-	m.form = formState{card: contact.Clone(c.Card), cursor: 1, book: book, editing: c, path: c.Path}
-	m.mode = modeShow
-}
 func (m *model) saveForm() tea.Cmd {
 	if len(m.books) == 0 {
 		m.message = "no addressbooks configured"
+		m.messageErr = true
 		m.mode = modeList
 		return nil
 	}
@@ -334,6 +327,7 @@ func (m *model) startMerge() tea.Cmd {
 	targets := m.targets()
 	if m.selectedCount() < 2 {
 		m.message = "select at least two contacts to merge"
+		m.messageErr = true
 		return nil
 	}
 	books := map[string]bool{}

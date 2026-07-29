@@ -22,7 +22,6 @@ const (
 	modeBooks
 	modeConfirm
 	modeForm
-	modeShow
 	modeConflict
 	modeCustom
 	modeAddressbookFilter
@@ -74,6 +73,8 @@ type model struct {
 	filterBookCursor              int
 	form                          formState
 	message                       string
+	messageErr                    bool
+	showHelp                      bool
 	conflicts                     []string
 	conflictValues                map[string][]string
 	conflictChoice                map[string]string
@@ -92,6 +93,7 @@ var dim = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 var fieldNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
 var fieldValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 var selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62"))
+var errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 
 func Run(store *contact.Store, cfg *config.Config) error {
 	contacts, err := store.Load()
@@ -148,6 +150,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clamp()
 		return m, nil
 	}
+	if m.showHelp {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "?", "esc", "q":
+				m.showHelp = false
+			}
+		}
+		return m, nil
+	}
 	if m.mode == modeForm && m.form.activeForm != nil {
 		return m.updateActiveEditorForm(msg)
 	}
@@ -156,6 +167,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
+		return m, nil
+	}
+	if k.String() == "?" && m.mode != modeCustom {
+		m.showHelp = true
 		return m, nil
 	}
 	switch m.mode {
@@ -171,20 +186,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEmailMatches(k)
 	case modeForm:
 		return m.updateForm(k)
-	case modeShow:
-		switch k.String() {
-		case "esc", "q", "enter":
-			m.mode = modeList
-		case "j", "down":
-			m.moveEditorCursor(m.editorRows(), 1)
-		case "k", "up":
-			m.moveEditorCursor(m.editorRows(), -1)
-		case "e":
-			if m.form.editing != nil {
-				m.startForm(m.form.editing, nil)
-			}
-		}
-		return m, nil
 	case modeConflict:
 		return m, nil
 	case modeCustom:
@@ -211,17 +212,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if c := m.current(); c != nil {
-			m.startShow(c)
+			m.startForm(c, nil)
 		}
 	case "n":
 		m.startForm(nil, nil)
 	case "b":
 		m.mode = modeAddressbookFilter
 		m.filterBookCursor = m.currentFilterBookCursor()
-	case "e":
-		if c := m.current(); c != nil {
-			m.startForm(c, nil)
-		}
 	case "c":
 		m.startBookOperation(opCopy)
 	case "x":
@@ -295,7 +292,7 @@ func (m *model) updateConfirm(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 func (m *model) updateForm(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if k.String() == "esc" {
+	if k.String() == "esc" || k.String() == "q" || k.String() == "ctrl+c" {
 		if m.quitAfterSave {
 			return m, tea.Quit
 		}
@@ -336,31 +333,32 @@ func (m *model) updateCustom(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 func (m *model) View() string {
-	if m.mode == modeShow {
-		return m.formView()
+	if m.showHelp {
+		return m.renderHelpOverlay(max(58, m.width*2/3), max(16, m.height*2/3))
 	}
-	if m.mode == modeForm {
-		return m.formView()
+	var content string
+	switch m.mode {
+	case modeForm:
+		content = m.formView()
+	case modeBooks:
+		content = m.bookView()
+	case modeConfirm:
+		content = m.confirmView()
+	case modeAddressbookFilter:
+		content = m.addressbookFilterView()
+	case modeEmailMatches:
+		content = m.emailMatchesView()
+	case modeConflict:
+		content = m.conflictView()
+	case modeCustom:
+		content = "\n  " + accent.Render("Enter a custom conflict value") + "\n\n  " + m.search.View()
+	default:
+		content = m.listView()
 	}
-	if m.mode == modeBooks {
-		return m.bookView()
+	if legend := m.shortcutsLegend(); legend != "" {
+		content = lipgloss.JoinVertical(lipgloss.Left, content, "", dim.Render(" "+legend))
 	}
-	if m.mode == modeConfirm {
-		return m.confirmView()
-	}
-	if m.mode == modeAddressbookFilter {
-		return m.addressbookFilterView()
-	}
-	if m.mode == modeEmailMatches {
-		return m.emailMatchesView()
-	}
-	if m.mode == modeConflict {
-		return m.conflictView()
-	}
-	if m.mode == modeCustom {
-		return "\n  " + accent.Render("Enter a custom conflict value") + "\n\n  " + m.search.View() + "\n\n  enter accept · esc cancel"
-	}
-	return m.listView()
+	return content
 }
 
 func (m *model) emailMatchesView() string {
@@ -379,16 +377,21 @@ func (m *model) emailMatchesView() string {
 	if m.emailMatchCursor == createIndex {
 		line = selectedStyle.Render("› Create new")
 	}
-	b.WriteString(line + "\n\n" + dim.Render(" j/k move · enter choose · esc cancel"))
+	b.WriteString(line + "\n")
 	return b.String()
 }
 func (m *model) listView() string {
 	var b strings.Builder
-	b.WriteString(accent.Render(" go-khard — Contacts ") + "\n")
+	b.WriteString(m.listHeader() + "\n")
+	if m.message != "" {
+		message := dim.Render(m.message)
+		if m.messageErr {
+			message = errorStyle.Render(m.message)
+		}
+		b.WriteString(" " + message + "\n")
+	}
 	if m.mode == modeSearch {
 		b.WriteString(" " + m.search.View() + "\n")
-	} else {
-		b.WriteString(dim.Render(" / search   b addressbook   space select   enter show   n new   e edit   c copy   x move   ctrl-d delete   M merge   q quit") + "\n")
 	}
 	nameW, bookW := max(16, (m.width*30)/100), max(10, (m.width*16)/100)
 	emailW := max(18, (m.width*28)/100)
@@ -416,12 +419,14 @@ func (m *model) listView() string {
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + dim.Render(fmt.Sprintf(" %d contacts · %d selected", len(m.visible), m.selectedCount())))
-	b.WriteString(" · " + dim.Render("addressbook: "+m.filterBookName()))
-	if m.message != "" {
-		b.WriteString(" · " + m.message)
-	}
 	return b.String()
+}
+
+func (m *model) listHeader() string {
+	title := accent.Render(" go-khard — Contacts ")
+	stats := dim.Render(fmt.Sprintf("%d contacts · %d selected · addressbook: %s ", len(m.visible), m.selectedCount(), m.filterBookName()))
+	gap := max(1, m.width-lipgloss.Width(title)-lipgloss.Width(stats))
+	return title + strings.Repeat(" ", gap) + stats
 }
 func (m *model) addressbookFilterView() string {
 	var b strings.Builder
@@ -442,7 +447,6 @@ func (m *model) addressbookFilterView() string {
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + dim.Render(" j/k move · enter apply · esc cancel"))
 	return b.String()
 }
 func (m *model) bookView() string {
@@ -459,39 +463,31 @@ func (m *model) bookView() string {
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("\n" + dim.Render(" j/k move · enter choose · esc cancel"))
 	return b.String()
 }
 func (m *model) confirmView() string {
-	return "\n  " + accent.Render("Confirm") + "\n\n  " + m.confirmText() + "\n\n  y/enter confirm · n/esc cancel"
+	return "\n  " + accent.Render("Confirm") + "\n\n  " + m.confirmText()
 }
 func (m *model) conflictView() string {
 	if m.conflictForm == nil {
 		return ""
 	}
 	progress := fmt.Sprintf(" Conflict %d of %d ", m.conflictCursor+1, len(m.conflicts))
-	header := accent.Render(" Resolve merge conflicts ") + "\n" + dim.Render(progress+"· j/k choose · enter accept · esc cancel")
+	header := accent.Render(" Resolve merge conflicts ") + "\n" + dim.Render(progress)
 	popupWidth := min(64, max(30, m.width-8))
-	popup := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2).Width(popupWidth).Render(m.conflictForm.View())
+	popup := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2).Width(popupWidth).Render(editorPopupView(m.conflictForm, popupWidth-4))
 	return header + "\n" + lipgloss.Place(m.width, max(8, m.height-2), lipgloss.Center, lipgloss.Center, popup)
 }
 func (m *model) formView() string {
 	var b strings.Builder
 	title := "Add contact"
-	if m.mode == modeShow {
-		title = "Contact details"
-	} else if m.form.editing != nil {
+	if m.form.editing != nil {
 		title = "Edit contact"
 	}
 	if len(m.form.merged) > 0 {
 		title = "Review merged contact"
 	}
 	b.WriteString(accent.Render(" "+title+" ") + "\n")
-	if m.mode == modeShow {
-		b.WriteString(dim.Render(" j/k navigate · e edit · enter/esc/q back") + "\n")
-	} else {
-		b.WriteString(dim.Render(" j/k navigate · enter edit · ctrl+d remove entry · ctrl+s save · esc cancel") + "\n")
-	}
 	rows := m.editorRows()
 	page := max(5, m.height-5)
 	if m.form.cursor < m.form.offset {
@@ -535,13 +531,151 @@ func (m *model) formView() string {
 		b.WriteString(line + "\n")
 	}
 	if m.form.errMsg != "" {
-		b.WriteString("\n " + lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.form.errMsg))
+		b.WriteString("\n " + errorStyle.Render(m.form.errMsg))
 	}
 	base := b.String()
 	if m.form.activeForm == nil {
 		return base
 	}
 	popupWidth := min(64, max(30, m.width-8))
-	popup := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2).Width(popupWidth).Render(m.form.activeForm.View())
+	popup := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(1, 2).Width(popupWidth).Render(editorPopupView(m.form.activeForm, popupWidth-4))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup)
+}
+
+func (m *model) shortcutsLegend() string {
+	if (m.mode == modeForm && m.form.activeForm != nil) || (m.mode == modeConflict && m.conflictForm != nil) {
+		return ""
+	}
+	switch m.mode {
+	case modeSearch:
+		return "[esc] Cancel  [enter] Apply  [?] Help"
+	case modeForm:
+		legend := "[esc/q] Cancel  [j/k] Next / Prev  [enter] Edit"
+		if row, ok := m.currentEditorRow(); ok && removableEditorRow(row) {
+			legend += "  [ctrl+d] Remove"
+		}
+		return legend + "  [ctrl+s] Save  [?] Help"
+	case modeBooks:
+		return "[esc/q] Cancel  [j/k] Next / Prev  [enter] Choose  [?] Help"
+	case modeConfirm:
+		return "[esc/q/n] Cancel  [enter/y] Confirm  [?] Help"
+	case modeAddressbookFilter:
+		return "[esc/q] Cancel  [j/k] Next / Prev  [enter] Apply  [?] Help"
+	case modeEmailMatches:
+		return "[esc/q] Cancel  [j/k] Next / Prev  [enter] Choose  [?] Help"
+	case modeCustom:
+		return "[esc] Cancel  [enter] Accept"
+	case modeConflict:
+		return "[esc/q] Cancel  [?] Help"
+	default:
+		return "[esc/q] Exit  [j/k] Next / Prev  [/] Search  [enter] Open  [n] New  [?] Help"
+	}
+}
+
+func (m *model) helpLines() []string {
+	switch m.mode {
+	case modeSearch:
+		return []string{
+			"Type        Search names, email, and phone",
+			"←/→         Move within search text",
+			"enter       Apply search",
+			"esc         Cancel search",
+			"?           Toggle help",
+		}
+	case modeForm:
+		lines := []string{
+			"esc, q      Cancel contact editor",
+			"ctrl+c      Cancel contact editor",
+			"j/k         Next / previous editable item",
+			"↑/↓         Next / previous editable item",
+			"tab         Next editable item",
+			"shift+tab   Previous editable item",
+			"enter       Edit selected field",
+		}
+		if row, ok := m.currentEditorRow(); ok && removableEditorRow(row) {
+			lines = append(lines, "ctrl+d      Remove selected entry")
+		}
+		return append(lines,
+			"ctrl+s      Save contact",
+			"?           Toggle help",
+		)
+	case modeBooks:
+		return []string{
+			"esc, q      Cancel",
+			"j/k         Next / previous addressbook",
+			"↑/↓         Next / previous addressbook",
+			"enter       Choose addressbook",
+			"?           Toggle help",
+		}
+	case modeConfirm:
+		return []string{
+			"enter, y    Confirm operation",
+			"esc, q, n   Cancel operation",
+			"?           Toggle help",
+		}
+	case modeAddressbookFilter:
+		return []string{
+			"esc, q      Cancel",
+			"j/k         Next / previous addressbook",
+			"↑/↓         Next / previous addressbook",
+			"enter       Apply filter",
+			"?           Toggle help",
+		}
+	case modeEmailMatches:
+		return []string{
+			"esc, q      Cancel",
+			"ctrl+c      Cancel",
+			"j/k         Next / previous match",
+			"↑/↓         Next / previous match",
+			"enter       Choose match",
+			"?           Toggle help",
+		}
+	case modeCustom:
+		return []string{"enter       Accept value", "esc         Cancel"}
+	default:
+		return []string{
+			"esc, q      Exit",
+			"ctrl+c      Exit",
+			"j/k         Next / previous contact",
+			"↑/↓         Next / previous contact",
+			"ctrl+f/b    Page down / page up",
+			"/           Search contacts",
+			"enter       Open contact editor",
+			"n           New contact",
+			"space       Select/unselect contact",
+			"b           Filter by addressbook",
+			"c           Copy selected contacts",
+			"x           Move selected contacts",
+			"ctrl+d      Delete selected contacts",
+			"M           Merge selected contacts",
+			"?           Toggle help",
+		}
+	}
+}
+
+func (m *model) renderHelpOverlay(width, height int) string {
+	width = max(58, width)
+	lines := m.helpLines()
+	height = max(height, len(lines)+4)
+	title := accent.Render("Shortcuts")
+	body := lipgloss.NewStyle().Width(width - 4).Render(strings.Join(lines, "\n"))
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("245")).
+		Padding(1, 2).
+		Width(width).
+		Height(height).
+		Render(lipgloss.JoinVertical(lipgloss.Left, title, "", body))
+	if m.width <= 0 || m.height <= 0 {
+		return box
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+func editorPopupView(form *huh.Form, width int) string {
+	if form == nil {
+		return ""
+	}
+	view := form.WithWidth(max(24, width)).WithShowHelp(true).WithShowErrors(true).View()
+	return lipgloss.JoinVertical(lipgloss.Left, view, "", dim.Render("[esc] Cancel"))
 }

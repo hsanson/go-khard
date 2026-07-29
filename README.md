@@ -72,26 +72,34 @@ address book, email addresses, and phone numbers as columns.
 | --- | --- |
 | `j` / `k` | move |
 | `/` | fuzzy search |
-| `b` | filter by addressbook |
+| `enter` | edit contact |
+| `n` | new contact |
 | `space` | select/unselect |
-| `enter` | show contact |
-| `n` / `e` | new/edit |
+| `b` | filter by addressbook |
 | `c` / `x` | copy/move selected contacts |
 | `ctrl-d` | delete selected contacts |
 | `M` | merge two or more selected contacts |
-| `q` | quit |
+| `q` / `esc` | quit |
+| `?` | show shortcuts for the current screen |
 
 Copy, move, and delete require confirmation. Merge combines list-valued fields,
-prompts for scalar conflicts (`e` enters a custom value), opens a final review
-form, and then saves to the selected address book before removing duplicates.
+prompts for scalar conflicts, opens a final review form, and then saves to the
+selected address book before removing duplicates.
+
+Shortcut labels appear at the bottom and contain only common actions for the
+current screen. Press `?` for all relevant shortcuts, including selection,
+addressbook filtering, copy, move, merge, and deletion on the contact list.
 
 The add, edit, and merge-review screens use a sectioned item editor covering
 the complete khard contact template: identity and structured names, kind,
 nicknames, dates, organizations, titles and roles, typed phone numbers and
 emails, structured postal addresses, categories, webpages, private `X-*`
-properties, and notes. Use `j`/`k` to navigate, `enter` to open a field popup,
-the highlighted `+ Add …` rows to append repeatable values, `ctrl+d` to remove a
-repeatable entry, and `ctrl+s` to save.
+properties, and notes. Use `j`/`k` to navigate editable rows, `enter` to open a
+field popup, highlighted `+ Add …` rows to append repeatable values, `ctrl+d` to
+remove a repeatable entry, and `ctrl+s` to save. Press `q` or `esc` to return to
+the contact list. Field popups use `ctrl+j`/`ctrl+k` to move between fields and
+`ctrl+enter` to insert a newline in text fields; tab and shift-tab remain
+supported.
 
 Phone and email entries allow multiple types, while address entries use a
 single type. Extra type labels can be added to the shared configuration:

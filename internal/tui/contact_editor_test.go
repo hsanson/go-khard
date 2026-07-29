@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -61,55 +62,40 @@ func TestEditHidesAddressbookAndAddShowsItFirst(t *testing.T) {
 	}
 }
 
-func TestShowUsesReadOnlyEditorAndEditShortcut(t *testing.T) {
+func TestEnterOpensEditorAndPathIsNotSelectable(t *testing.T) {
 	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
 	card := make(vcard.Card)
 	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
 	card.AddValue(vcard.FieldEmail, "ada@example.net")
 	entry := contact.Contact{Card: card, Path: "/tmp/one/ada.vcf", Book: book}
-	m := &model{books: []config.Source{book}}
-	m.startShow(&entry)
+	m := &model{mode: modeList, books: []config.Source{book}, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
 
-	if m.mode != modeShow {
-		t.Fatalf("startShow() mode = %v", m.mode)
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeForm || m.form.editing == nil {
+		t.Fatalf("enter did not open contact editor: mode=%v editing=%#v", m.mode, m.form.editing)
 	}
-	foundBook := false
-	foundPath := false
-	showRows := m.editorRows()
-	for i, row := range showRows {
-		if row.add {
-			t.Fatalf("show view contains add row: %#v", row)
-		}
+
+	rows := m.editorRows()
+	pathIndex := -1
+	for i, row := range rows {
 		if row.key == "addressbook" {
-			foundBook = true
+			t.Fatal("existing contact editor allows changing addressbook")
 		}
 		if row.key == "file-path" && row.value == entry.Path {
-			foundPath = true
+			pathIndex = i
 			m.form.cursor = i
-			if cmd := m.openEditorPopup(showRows); cmd != nil {
+			if cmd := m.openEditorPopup(rows); cmd != nil {
 				t.Fatal("file path row opened an editor")
 			}
 		}
 	}
-	if !foundBook {
-		t.Fatal("show view does not display addressbook")
-	}
-	if !foundPath {
-		t.Fatal("show view does not display vCard path")
-	}
-
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
-	if m.mode != modeForm || m.form.editing == nil {
-		t.Fatalf("e did not switch show view to edit: mode=%v", m.mode)
-	}
-	foundPath = false
-	for _, row := range m.editorRows() {
-		if row.key == "file-path" && row.value == entry.Path {
-			foundPath = true
-		}
-	}
-	if !foundPath {
+	if pathIndex < 0 {
 		t.Fatal("edit view does not display vCard path")
+	}
+	m.form.cursor = pathIndex - 1
+	m.moveEditorCursor(rows, 1)
+	if rows[m.form.cursor].key == "file-path" || rows[m.form.cursor].section {
+		t.Fatalf("navigation selected non-editable row: %#v", rows[m.form.cursor])
 	}
 }
 
@@ -290,5 +276,112 @@ func TestFormattedNameFromComponents(t *testing.T) {
 	card.SetName(&vcard.Name{HonorificPrefix: "Countess", GivenName: "Ada", FamilyName: "Lovelace"})
 	if got := formattedNameFromCard(card); got != "Countess Ada Lovelace" {
 		t.Fatalf("formatted name = %q", got)
+	}
+}
+
+func TestEditorPopupKeyMapPrefersJKAndCtrlJK(t *testing.T) {
+	keymap := NewPreferredMultiFieldFormKeyMap()
+	if got := keymap.Select.Up.Help().Key; got != "k" {
+		t.Fatalf("select previous help key = %q", got)
+	}
+	if got := keymap.Select.Down.Help().Key; got != "j" {
+		t.Fatalf("select next help key = %q", got)
+	}
+	if got := keymap.Input.Next.Help().Key; got != "ctrl+j" {
+		t.Fatalf("field next help key = %q", got)
+	}
+	if got := keymap.Input.Prev.Help().Key; got != "ctrl+k" {
+		t.Fatalf("field previous help key = %q", got)
+	}
+	if containsString(keymap.Select.Down.Keys(), "ctrl+j") || containsString(keymap.Select.Up.Keys(), "ctrl+k") {
+		t.Fatal("ctrl+j/ctrl+k navigate select options instead of fields")
+	}
+	if got := keymap.Text.NewLine.Help().Key; got != "ctrl+enter" {
+		t.Fatalf("text newline help key = %q", got)
+	}
+	if containsString(keymap.Text.NewLine.Keys(), "alt+enter") {
+		t.Fatal("alt+enter remains bound to text newline")
+	}
+}
+
+func TestEditorPopupShowsEscapeCancel(t *testing.T) {
+	value := ""
+	view := editorPopupView(popup(huh.NewInput().Title("Name").Value(&value)), 50)
+	if !strings.Contains(view, "[esc] Cancel") {
+		t.Fatalf("editor popup omits escape shortcut:\n%s", view)
+	}
+}
+
+func TestCtrlJAndCtrlKNavigateEditorPopupFields(t *testing.T) {
+	first, second := "", ""
+	form := popup(
+		huh.NewInput().Title("First").Value(&first),
+		huh.NewInput().Title("Second").Value(&second),
+	)
+	m := &model{mode: modeForm, form: formState{card: make(vcard.Card), activeForm: form}}
+	before := form.GetFocusedField()
+	var teaModel tea.Model = m
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if form.GetFocusedField() == before {
+		t.Fatal("ctrl+j did not move to next popup field")
+	}
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyCtrlK})
+	if form.GetFocusedField() != before {
+		t.Fatal("ctrl+k did not move to previous popup field")
+	}
+}
+
+func TestRemoveShortcutShownOnlyForRemovableRows(t *testing.T) {
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+	card.AddValue(vcard.FieldEmail, "ada@example.net")
+	m := &model{mode: modeForm, form: formState{card: card}}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldFormattedName {
+			m.form.cursor = i
+			help := strings.Join(m.helpLines(), "\n")
+			if strings.Contains(m.shortcutsLegend(), "Remove") || strings.Contains(help, "Remove") {
+				t.Fatal("remove shortcut shown for non-removable formatted name")
+			}
+			if strings.Contains(help, "Copy selected contacts") || strings.Contains(help, "Filter by addressbook") {
+				t.Fatalf("contact editor help contains list shortcuts:\n%s", help)
+			}
+		}
+		if row.key == vcard.FieldEmail && !row.add {
+			m.form.cursor = i
+			if !strings.Contains(m.shortcutsLegend(), "[ctrl+d] Remove") || !strings.Contains(strings.Join(m.helpLines(), "\n"), "Remove selected entry") {
+				t.Fatal("remove shortcut hidden for removable email")
+			}
+		}
+	}
+}
+
+func updateAndRunHuhNavigation(teaModel tea.Model, msg tea.Msg) tea.Model {
+	updated, cmd := teaModel.Update(msg)
+	return runHuhNavigation(updated, cmd)
+}
+
+func runHuhNavigation(teaModel tea.Model, cmd tea.Cmd) tea.Model {
+	if cmd == nil {
+		return teaModel
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			teaModel = runHuhNavigation(teaModel, child)
+		}
+		return teaModel
+	}
+	typeOf := reflect.TypeOf(msg)
+	if typeOf == nil || typeOf.PkgPath() != "github.com/charmbracelet/huh" {
+		return teaModel
+	}
+	switch typeOf.Name() {
+	case "nextFieldMsg", "prevFieldMsg", "nextGroupMsg", "prevGroupMsg":
+		updated, next := teaModel.Update(msg)
+		return runHuhNavigation(updated, next)
+	default:
+		return teaModel
 	}
 }
