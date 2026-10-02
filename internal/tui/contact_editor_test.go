@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/emersion/go-vcard"
 	"github.com/hsanson/go-khard/internal/config"
 	"github.com/hsanson/go-khard/internal/contact"
@@ -129,8 +131,7 @@ func TestMergeConflictsAreResolvedSequentiallyBeforeReview(t *testing.T) {
 		key := m.conflicts[m.conflictCursor]
 		values := m.conflictValues[key]
 		m.conflictValue = values[len(values)-1]
-		m.conflictForm.State = huh.StateCompleted
-		_, _ = m.updateActiveConflictForm(nil)
+		_, _ = m.applyConflict()
 	}
 	if m.mode != modeForm || len(m.form.merged) != 2 {
 		t.Fatalf("merge did not reach review form: mode=%v", m.mode)
@@ -167,19 +168,6 @@ func TestActivePopupRoutesNavigationMessagesAndEscape(t *testing.T) {
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if m.form.activeForm != nil {
 		t.Fatal("escape did not close popup")
-	}
-}
-
-func TestDateValidation(t *testing.T) {
-	for _, valid := range []string{"", "1815-12-10", "2000-02-29"} {
-		if err := optionalDate(valid); err != nil {
-			t.Errorf("optionalDate(%q) = %v", valid, err)
-		}
-	}
-	for _, invalid := range []string{"10-12-1815", "1815-02-30", "1815-2-3"} {
-		if err := optionalDate(invalid); err == nil {
-			t.Errorf("optionalDate(%q) succeeded", invalid)
-		}
 	}
 }
 
@@ -221,6 +209,25 @@ func TestNoteContinuationLinesAreIndented(t *testing.T) {
 	indent := strings.Repeat(" ", 24)
 	if !strings.Contains(view, "\n"+indent+fieldValueStyle.Render("second line")) {
 		t.Fatalf("note continuation is not aligned with value column:\n%s", view)
+	}
+}
+
+func TestNoteCtrlEnterInsertsNewline(t *testing.T) {
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldNote, "first line")
+	m := &model{mode: modeForm, form: formState{card: card}}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldNote {
+			m.form.cursor = i
+			break
+		}
+	}
+	teaModel := runHuhNavigation(m, m.openEditorPopup(rows))
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyCtrlJ})
+	m = teaModel.(*model)
+	if got := m.form.tmp[0]; got != "first line\n" {
+		t.Fatalf("note after Ctrl-Enter = %q", got)
 	}
 }
 
@@ -279,81 +286,191 @@ func TestFormattedNameFromComponents(t *testing.T) {
 	}
 }
 
-func TestEditorPopupKeyMapPrefersJKAndCtrlJK(t *testing.T) {
-	keymap := NewPreferredMultiFieldFormKeyMap()
-	if got := keymap.Select.Up.Help().Key; got != "k" {
-		t.Fatalf("select previous help key = %q", got)
-	}
-	if got := keymap.Select.Down.Help().Key; got != "j" {
-		t.Fatalf("select next help key = %q", got)
-	}
-	if got := keymap.Input.Next.Help().Key; got != "ctrl+j" {
-		t.Fatalf("field next help key = %q", got)
-	}
-	if got := keymap.Input.Prev.Help().Key; got != "ctrl+k" {
-		t.Fatalf("field previous help key = %q", got)
-	}
-	if containsString(keymap.Select.Down.Keys(), "ctrl+j") || containsString(keymap.Select.Up.Keys(), "ctrl+k") {
-		t.Fatal("ctrl+j/ctrl+k navigate select options instead of fields")
-	}
-	if got := keymap.Text.NewLine.Help().Key; got != "ctrl+enter" {
-		t.Fatalf("text newline help key = %q", got)
-	}
-	if containsString(keymap.Text.NewLine.Keys(), "alt+enter") {
-		t.Fatal("alt+enter remains bound to text newline")
-	}
-}
-
-func TestEditorPopupShowsEscapeCancel(t *testing.T) {
-	value := ""
-	view := editorPopupView(popup(huh.NewInput().Title("Name").Value(&value)), 50)
-	if !strings.Contains(view, "[esc] Cancel") {
-		t.Fatalf("editor popup omits escape shortcut:\n%s", view)
-	}
-}
-
-func TestCtrlJAndCtrlKNavigateEditorPopupFields(t *testing.T) {
+func TestEditorDialogTraversesFieldsAndActions(t *testing.T) {
 	first, second := "", ""
 	form := popup(
 		huh.NewInput().Title("First").Value(&first),
 		huh.NewInput().Title("Second").Value(&second),
 	)
-	m := &model{mode: modeForm, form: formState{card: make(vcard.Card), activeForm: form}}
+	m := &model{mode: modeForm, form: formState{
+		card: make(vcard.Card), activeForm: form, activeRow: editorRow{key: vcard.FieldOrganization},
+		dialogFields: 2,
+	}}
 	before := form.GetFocusedField()
-	var teaModel tea.Model = m
-	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyCtrlJ})
-	if form.GetFocusedField() == before {
-		t.Fatal("ctrl+j did not move to next popup field")
+	_, _ = m.updateActiveEditorForm(tea.KeyMsg{Type: tea.KeyDown})
+	if form.GetFocusedField() == before || m.form.dialogField != 1 {
+		t.Fatal("Down did not focus the next field")
 	}
-	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyCtrlK})
-	if form.GetFocusedField() != before {
-		t.Fatal("ctrl+k did not move to previous popup field")
+	_, _ = m.updateActiveEditorForm(tea.KeyMsg{Type: tea.KeyDown})
+	if m.form.dialogFocus != dialogFocusPrimary {
+		t.Fatalf("Down from final field focus = %v", m.form.dialogFocus)
+	}
+	_, _ = m.updateActiveEditorForm(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.form.dialogFocus != dialogFocusControl || m.form.dialogField != 1 {
+		t.Fatalf("Shift-Tab from Apply: focus=%v field=%d", m.form.dialogFocus, m.form.dialogField)
 	}
 }
 
-func TestRemoveShortcutShownOnlyForRemovableRows(t *testing.T) {
-	card := make(vcard.Card)
-	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
-	card.AddValue(vcard.FieldEmail, "ada@example.net")
-	m := &model{mode: modeForm, form: formState{card: card}}
+func TestJKChangesSelectAndMultiSelectOptions(t *testing.T) {
+	m := &model{cfg: config.Default(), mode: modeForm, width: 100, form: formState{card: make(vcard.Card)}}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldKind {
+			m.form.cursor = i
+			break
+		}
+	}
+	teaModel := runHuhNavigation(m, m.openEditorPopup(rows))
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = teaModel.(*model)
+	if got := m.form.tmp[0]; got != "individual" {
+		t.Fatalf("Kind after j = %q", got)
+	}
+	m.cancelEditorDialog()
+
+	rows = m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldTelephone && row.add {
+			m.form.cursor = i
+			break
+		}
+	}
+	teaModel = runHuhNavigation(m, m.openEditorPopup(rows))
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeySpace})
+	m = teaModel.(*model)
+	if !containsString(m.form.tmpTypes, "home") {
+		t.Fatalf("Phone Types after j/space = %#v", m.form.tmpTypes)
+	}
+}
+
+func TestEnterOnFinalEditorFieldApplies(t *testing.T) {
+	m := &model{mode: modeForm, form: formState{card: make(vcard.Card)}}
 	rows := m.editorRows()
 	for i, row := range rows {
 		if row.key == vcard.FieldFormattedName {
 			m.form.cursor = i
-			help := strings.Join(m.helpLines(), "\n")
-			if strings.Contains(m.shortcutsLegend(), "Remove") || strings.Contains(help, "Remove") {
-				t.Fatal("remove shortcut shown for non-removable formatted name")
-			}
-			if strings.Contains(help, "Copy selected contacts") || strings.Contains(help, "Filter by addressbook") {
-				t.Fatalf("contact editor help contains list shortcuts:\n%s", help)
-			}
+			break
 		}
+	}
+	teaModel := runHuhNavigation(m, m.openEditorPopup(rows))
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Ada Lovelace")})
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyEnter})
+	m = teaModel.(*model)
+	if m.form.activeForm != nil {
+		t.Fatal("Enter on the final field left an empty action dialog open")
+	}
+	if got := m.form.card.Value(vcard.FieldFormattedName); got != "Ada Lovelace" {
+		t.Fatalf("formatted name after Enter = %q", got)
+	}
+}
+
+func TestDeleteActionRemovesExistingItemOnly(t *testing.T) {
+	card := make(vcard.Card)
+	card.AddValue(vcard.FieldEmail, "ada@example.net")
+	m := &model{cfg: config.Default(), mode: modeForm, form: formState{card: card}}
+	rows := m.editorRows()
+	for i, row := range rows {
 		if row.key == vcard.FieldEmail && !row.add {
 			m.form.cursor = i
-			if !strings.Contains(m.shortcutsLegend(), "[ctrl+d] Remove") || !strings.Contains(strings.Join(m.helpLines(), "\n"), "Remove selected entry") {
-				t.Fatal("remove shortcut hidden for removable email")
-			}
+			_ = m.openEditorPopup(rows)
+			break
 		}
+	}
+	if !m.editorDialogHasDelete() {
+		t.Fatal("existing email dialog has no Delete action")
+	}
+	m.form.dialogFocus = dialogFocusDelete
+	_, _ = m.activateEditorDialog()
+	if len(m.form.card[vcard.FieldEmail]) != 0 {
+		t.Fatalf("email was not removed: %#v", m.form.card[vcard.FieldEmail])
+	}
+
+	rows = m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldEmail && row.add {
+			m.form.cursor = i
+			_ = m.openEditorPopup(rows)
+			break
+		}
+	}
+	if m.editorDialogHasDelete() {
+		t.Fatal("new email dialog exposes Delete")
+	}
+}
+
+func TestContactFormScrollsToFocusedActions(t *testing.T) {
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+	m := &model{width: 80, height: 10, mode: modeForm, form: formState{card: card}}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == "form-cancel" {
+			m.form.cursor = i
+			break
+		}
+	}
+	view := m.formBaseView()
+	if !strings.Contains(view, "Save") || !strings.Contains(view, "Cancel") {
+		t.Fatalf("focused form actions are outside the viewport:\n%s", view)
+	}
+}
+
+func TestFieldDialogOverlaysContactForm(t *testing.T) {
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+	m := &model{width: 80, height: 30, mode: modeForm, form: formState{card: card}}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldFormattedName {
+			m.form.cursor = i
+			break
+		}
+	}
+	_ = m.openEditorPopup(rows)
+	view := m.formView()
+	if !strings.Contains(view, "Roles") || !strings.Contains(view, "Apply") {
+		t.Fatalf("overlay does not retain the contact form and actions:\n%s", view)
+	}
+}
+
+func TestDialogsUseSixtyPercentOfTerminalWidth(t *testing.T) {
+	m := &model{width: 100, height: 40}
+	want := 60
+	dialogs := []struct {
+		name string
+		view string
+	}{
+		{name: "centered", view: m.centerDialog("Confirm", nil)},
+		{name: "form overlay", view: m.overlayDialog(strings.Repeat("x", m.width), "Field", nil)},
+		{name: "help", view: m.renderHelpOverlay(m.mainHeight())},
+	}
+	for _, dialog := range dialogs {
+		if got := renderedDialogWidth(dialog.view); got != want {
+			t.Errorf("%s dialog width = %d, want %d", dialog.name, got, want)
+		}
+	}
+}
+
+func renderedDialogWidth(view string) int {
+	for line := range strings.SplitSeq(ansi.Strip(view), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "╭") {
+			return lipgloss.Width(line)
+		}
+	}
+	return 0
+}
+
+func TestDeleteActionReservesAnEmptyButtonSlot(t *testing.T) {
+	_, hits := dialogWithActions("", []dialogAction{
+		{label: "Apply", focus: dialogFocusPrimary},
+		{label: "Cancel", focus: dialogFocusCancel},
+		{label: "Delete", focus: dialogFocusDelete, destructive: true},
+	}, dialogFocusControl)
+	cancel, remove := hits[1].rect, hits[2].rect
+	if gap := remove.x - (cancel.x + cancel.width); gap < remove.width+4 {
+		t.Fatalf("Cancel/Delete gap = %d, want room for another button", gap)
 	}
 }
 

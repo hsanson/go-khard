@@ -19,17 +19,22 @@ func (m *model) current() *contact.Contact {
 	}
 	return &m.visible[m.cursor]
 }
-func (m *model) targets() []contact.Contact {
-	if m.op == opMerge && len(m.mergeTargets) > 0 {
-		return m.mergeTargets
-	}
-	var out []contact.Contact
+func (m *model) selectedTargets() []contact.Contact {
+	out := make([]contact.Contact, 0, m.selectedCount())
 	for _, c := range m.contacts {
 		if m.selected[c.Path] {
 			out = append(out, c)
 		}
 	}
-	if len(out) == 0 && m.current() != nil {
+	return out
+}
+
+func (m *model) targets() []contact.Contact {
+	if m.op == opMerge && len(m.mergeTargets) > 0 {
+		return m.mergeTargets
+	}
+	out := m.selectedTargets()
+	if len(out) == 0 && m.op == opCopy && m.current() != nil {
 		out = append(out, *m.current())
 	}
 	return out
@@ -40,29 +45,44 @@ func (m *model) updateEmailMatches(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "esc", "q", "ctrl+c":
 		return m, tea.Quit
+	case "tab":
+		cycleDialogAction(&m.dialogFocus, 1, false)
+	case "shift+tab":
+		cycleDialogAction(&m.dialogFocus, -1, false)
 	case "j", "down":
-		m.emailMatchCursor = (m.emailMatchCursor + 1) % total
+		moveDialogCursor(&m.dialogFocus, &m.emailMatchCursor, total, 1, false)
 	case "k", "up":
-		m.emailMatchCursor = (m.emailMatchCursor - 1 + total) % total
-	case "enter":
-		if m.emailMatchCursor == len(m.emailMatches) {
-			m.startForm(&m.emailSender, nil)
-			m.form.editing = nil
-			m.form.path = ""
-			return m, nil
-		}
-		existing := m.emailMatches[m.emailMatchCursor]
-		m.op = opMerge
-		m.mergeTargets = []contact.Contact{existing, m.emailSender}
-		for i, book := range m.books {
-			if book.Path == existing.Book.Path {
-				m.bookCursor = i
-				break
-			}
-		}
-		return m, m.prepareMerge(m.books[m.bookCursor])
+		moveDialogCursor(&m.dialogFocus, &m.emailMatchCursor, total, -1, false)
+	case "left", "h":
+		selectDialogAction(&m.dialogFocus, dialogFocusPrimary)
+	case "right", "l":
+		selectDialogAction(&m.dialogFocus, dialogFocusCancel)
+	case "enter", " ":
+		return m.activateEmailMatchDialog()
 	}
 	return m, nil
+}
+
+func (m *model) activateEmailMatchDialog() (tea.Model, tea.Cmd) {
+	if m.dialogFocus == dialogFocusCancel {
+		return m, tea.Quit
+	}
+	if m.emailMatchCursor == len(m.emailMatches) {
+		m.startForm(&m.emailSender, nil)
+		m.form.editing = nil
+		m.form.path = ""
+		return m, nil
+	}
+	existing := m.emailMatches[m.emailMatchCursor]
+	m.op = opMerge
+	m.mergeTargets = []contact.Contact{existing, m.emailSender}
+	for i, book := range m.books {
+		if book.Path == existing.Book.Path {
+			m.bookCursor = i
+			break
+		}
+	}
+	return m, m.prepareMerge(m.books[m.bookCursor])
 }
 func (m *model) selectedCount() int {
 	n := 0
@@ -73,7 +93,16 @@ func (m *model) selectedCount() int {
 	}
 	return n
 }
-func (m *model) pageSize() int { return max(1, m.height-6) }
+func (m *model) pageSize() int {
+	used := 2
+	if m.message != "" {
+		used++
+	}
+	if m.mode == modeSearch {
+		used++
+	}
+	return max(1, m.mainHeight()-used)
+}
 func (m *model) clamp() {
 	if len(m.visible) == 0 {
 		m.cursor = 0
@@ -90,7 +119,7 @@ func (m *model) clamp() {
 	}
 }
 func (m *model) filter() {
-	q := strings.ToLower(strings.TrimSpace(m.search.Value()))
+	q := normalizeSearchText(strings.TrimSpace(m.search.Value()))
 	m.visible = nil
 	for _, c := range m.contacts {
 		if m.filterBook != "" && c.Book.Path != m.filterBook {
@@ -103,34 +132,28 @@ func (m *model) filter() {
 	m.cursor = 0
 	m.offset = 0
 }
-func (m *model) updateAddressbookFilter(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+
+func (m *model) cycleAddressbook(delta int) {
 	total := len(m.books) + 1
-	switch k.String() {
-	case "esc", "q":
-		m.mode = modeList
-	case "j", "down":
-		m.filterBookCursor = (m.filterBookCursor + 1) % total
-	case "k", "up":
-		m.filterBookCursor = (m.filterBookCursor - 1 + total) % total
-	case "enter":
-		m.filterBook = ""
-		if m.filterBookCursor > 0 {
-			m.filterBook = m.books[m.filterBookCursor-1].Path
-		}
-		m.selected = map[string]bool{}
-		m.filter()
-		m.mode = modeList
+	if total <= 1 {
+		return
 	}
-	return m, nil
-}
-func (m *model) currentFilterBookCursor() int {
+	index := 0
 	for i, book := range m.books {
 		if book.Path == m.filterBook {
-			return i + 1
+			index = i + 1
+			break
 		}
 	}
-	return 0
+	index = (index + delta + total) % total
+	m.filterBook = ""
+	if index > 0 {
+		m.filterBook = m.books[index-1].Path
+	}
+	m.selected = map[string]bool{}
+	m.filter()
 }
+
 func (m *model) filterBookName() string {
 	if m.filterBook == "" {
 		return "All"
@@ -142,7 +165,15 @@ func (m *model) filterBookName() string {
 	}
 	return "All"
 }
+
+func normalizeSearchText(value string) string {
+	value = strings.ToLower(value)
+	return strings.NewReplacer("_", " ", "/", " ", "-", " ").Replace(value)
+}
+
 func fuzzy(text, q string) bool {
+	text = normalizeSearchText(text)
+	q = normalizeSearchText(q)
 	i := 0
 	query := []rune(q)
 	for _, r := range text {
@@ -167,29 +198,59 @@ func tableCell(s string, width int) string {
 }
 
 func (m *model) startBookOperation(op operation) {
+	m.op = op
 	if len(m.targets()) == 0 {
+		m.op = opNone
 		m.message = "no contact"
 		m.messageErr = true
 		return
 	}
 	if len(m.books) == 0 {
+		m.op = opNone
 		m.message = "no addressbooks configured"
 		m.messageErr = true
 		return
 	}
-	m.op = op
 	m.bookCursor = 0
+	m.dialogFocus = dialogFocusControl
 	m.mode = modeBooks
 }
+
+func (m *model) cancelBookOperation() {
+	m.mode = modeList
+	m.op = opNone
+	m.mergeTargets = nil
+	m.dialogFocus = dialogFocusControl
+}
+
+func (m *model) activateBookDialog() (tea.Model, tea.Cmd) {
+	if m.dialogFocus == dialogFocusCancel {
+		m.cancelBookOperation()
+		return m, nil
+	}
+	if len(m.books) == 0 {
+		return m, nil
+	}
+	if m.op == opMerge {
+		return m, m.prepareMerge(m.books[m.bookCursor])
+	}
+	m.mode = modeConfirm
+	m.dialogFocus = dialogFocusPrimary
+	return m, nil
+}
+
 func (m *model) startConfirmation(op operation) {
+	m.op = op
 	if len(m.targets()) == 0 {
+		m.op = opNone
 		m.message = "no contact"
 		m.messageErr = true
 		return
 	}
-	m.op = op
 	m.mode = modeConfirm
+	m.dialogFocus = dialogFocusPrimary
 }
+
 func (m *model) confirmText() string {
 	n := len(m.targets())
 	switch m.op {
@@ -199,8 +260,39 @@ func (m *model) confirmText() string {
 		return fmt.Sprintf("Move %d contact(s) to %s?", n, m.books[m.bookCursor].Name())
 	case opDelete:
 		return fmt.Sprintf("Permanently delete %d contact(s)?", n)
+	case opMerge:
+		return fmt.Sprintf("Merge %d contacts into one and delete the source files?", n)
 	}
 	return "Continue?"
+}
+
+func (m *model) activateConfirmation() (tea.Model, tea.Cmd) {
+	if m.dialogFocus == dialogFocusCancel {
+		m.cancelConfirmation()
+		return m, nil
+	}
+	if m.op == opMerge {
+		return m, m.saveForm()
+	}
+	err := m.executeOperation()
+	m.mode = modeList
+	m.op = opNone
+	m.reload(err)
+	return m, nil
+}
+
+func (m *model) cancelConfirmation() {
+	switch m.op {
+	case opCopy, opMove:
+		m.mode = modeBooks
+		m.dialogFocus = dialogFocusControl
+	case opMerge:
+		m.mode = modeForm
+		m.dialogFocus = dialogFocusControl
+	default:
+		m.mode = modeList
+		m.op = opNone
+	}
 }
 func (m *model) executeOperation() error {
 	targets := m.targets()
@@ -263,9 +355,17 @@ func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
 	}
 	book := 0
 	if c != nil {
-		for i, b := range m.books {
-			if b.Path == c.Book.Path {
+		for i, candidate := range m.books {
+			if candidate.Path == c.Book.Path {
 				book = i
+				break
+			}
+		}
+	} else if m.filterBook != "" {
+		for i, candidate := range m.books {
+			if candidate.Path == m.filterBook {
+				book = i
+				break
 			}
 		}
 	}
@@ -276,24 +376,56 @@ func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
 	m.form = formState{card: card, cursor: 1, book: book, editing: c, merged: merged, path: path}
 	m.mode = modeForm
 }
-func (m *model) saveForm() tea.Cmd {
+
+func (m *model) preparedFormCard() (vcard.Card, bool) {
 	if len(m.books) == 0 {
-		m.message = "no addressbooks configured"
-		m.messageErr = true
-		m.mode = modeList
-		return nil
+		m.form.errMsg = "No addressbooks configured"
+		return nil, false
 	}
 	card := contact.Clone(m.form.card)
-	existing := ""
-	if m.form.editing != nil {
-		existing = m.form.editing.Path
-	}
 	if strings.TrimSpace(card.Value(vcard.FieldFormattedName)) == "" {
 		card.SetValue(vcard.FieldFormattedName, formattedNameFromCard(card))
 	}
 	if strings.TrimSpace(card.Value(vcard.FieldFormattedName)) == "" {
 		m.form.errMsg = "Formatted name or a name component is required"
+		return nil, false
+	}
+	m.form.errMsg = ""
+	return card, true
+}
+
+func (m *model) saveOrConfirmForm() (tea.Model, tea.Cmd) {
+	if _, ok := m.preparedFormCard(); !ok {
+		return m, nil
+	}
+	if len(m.form.merged) > 0 {
+		m.op = opMerge
+		m.mode = modeConfirm
+		m.dialogFocus = dialogFocusPrimary
+		return m, nil
+	}
+	return m, m.saveForm()
+}
+
+func (m *model) cancelForm() (tea.Model, tea.Cmd) {
+	if m.quitAfterSave {
+		return m, tea.Quit
+	}
+	m.mode = modeList
+	m.op = opNone
+	m.mergeTargets = nil
+	return m, nil
+}
+
+func (m *model) saveForm() tea.Cmd {
+	card, ok := m.preparedFormCard()
+	if !ok {
+		m.mode = modeForm
 		return nil
+	}
+	existing := ""
+	if m.form.editing != nil {
+		existing = m.form.editing.Path
 	}
 	book := m.books[m.form.book]
 	if m.form.editing != nil && m.form.editing.Book.Path != book.Path {
@@ -315,6 +447,7 @@ func (m *model) saveForm() tea.Cmd {
 	}
 	m.mode = modeList
 	m.op = opNone
+	m.mergeTargets = nil
 	m.reload(err)
 	if err == nil && m.quitAfterSave {
 		return tea.Quit
@@ -323,13 +456,13 @@ func (m *model) saveForm() tea.Cmd {
 }
 
 func (m *model) startMerge() tea.Cmd {
-	m.mergeTargets = nil
-	targets := m.targets()
-	if m.selectedCount() < 2 {
+	targets := m.selectedTargets()
+	if len(targets) < 2 {
 		m.message = "select at least two contacts to merge"
 		m.messageErr = true
 		return nil
 	}
+	m.mergeTargets = targets
 	books := map[string]bool{}
 	for _, c := range targets {
 		books[c.Book.Path] = true
@@ -338,11 +471,13 @@ func (m *model) startMerge() tea.Cmd {
 	if len(books) > 1 {
 		m.mode = modeBooks
 		m.bookCursor = 0
+		m.dialogFocus = dialogFocusControl
 		return nil
 	}
-	for i, b := range m.books {
-		if b.Path == targets[0].Book.Path {
+	for i, book := range m.books {
+		if book.Path == targets[0].Book.Path {
 			m.bookCursor = i
+			break
 		}
 	}
 	return m.prepareMerge(m.books[m.bookCursor])
@@ -383,6 +518,7 @@ func (m *model) openConflictForm() tea.Cmd {
 	for _, value := range values {
 		options = append(options, huh.NewOption(value, value))
 	}
+	m.dialogFocus = dialogFocusControl
 	m.conflictForm = popup(huh.NewSelect[string]().
 		Title(conflictLabel(key)).
 		Description("Select the value to keep").
@@ -390,33 +526,77 @@ func (m *model) openConflictForm() tea.Cmd {
 		Value(&m.conflictValue))
 	return m.conflictForm.Init()
 }
-func (m *model) updateActiveConflictForm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
-		m.conflictForm = nil
-		if m.quitAfterSave {
-			return m, tea.Quit
-		}
-		m.mode = modeList
-		m.op = opNone
+
+func (m *model) cancelConflict() (tea.Model, tea.Cmd) {
+	m.conflictForm = nil
+	if m.quitAfterSave {
+		return m, tea.Quit
+	}
+	m.mode = modeList
+	m.op = opNone
+	m.mergeTargets = nil
+	m.dialogFocus = dialogFocusControl
+	return m, nil
+}
+
+func (m *model) applyConflict() (tea.Model, tea.Cmd) {
+	m.conflictForm.GetFocusedField().Blur()
+	m.conflictForm.NextField()
+	m.conflictForm.NextGroup()
+	if m.conflictForm.State != huh.StateCompleted {
+		m.dialogFocus = dialogFocusControl
 		return m, nil
+	}
+	key := m.conflicts[m.conflictCursor]
+	m.conflictChoice[key] = m.conflictValue
+	m.conflictCursor++
+	return m, m.openConflictForm()
+}
+
+func (m *model) updateActiveConflictForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		switch key.String() {
+		case "esc", "q", "ctrl+c":
+			return m.cancelConflict()
+		case "tab", "down":
+			if m.dialogFocus == dialogFocusControl {
+				m.conflictForm.GetFocusedField().Blur()
+				m.dialogFocus = dialogFocusPrimary
+			} else {
+				cycleDialogAction(&m.dialogFocus, 1, false)
+			}
+			return m, nil
+		case "shift+tab", "up":
+			if m.dialogFocus == dialogFocusControl {
+				m.conflictForm.GetFocusedField().Blur()
+				m.dialogFocus = dialogFocusCancel
+			} else {
+				cycleDialogAction(&m.dialogFocus, -1, false)
+			}
+			return m, nil
+		case "left", "h":
+			if m.dialogFocus != dialogFocusControl {
+				selectDialogAction(&m.dialogFocus, dialogFocusPrimary)
+				return m, nil
+			}
+		case "right", "l":
+			if m.dialogFocus != dialogFocusControl {
+				selectDialogAction(&m.dialogFocus, dialogFocusCancel)
+				return m, nil
+			}
+		case "enter", " ":
+			if m.dialogFocus == dialogFocusCancel {
+				return m.cancelConflict()
+			}
+			return m.applyConflict()
+		}
+		if m.dialogFocus != dialogFocusControl {
+			return m, nil
+		}
 	}
 	updated, cmd := m.conflictForm.Update(msg)
 	if form, ok := updated.(*huh.Form); ok {
 		m.conflictForm = form
-	}
-	switch m.conflictForm.State {
-	case huh.StateAborted:
-		m.conflictForm = nil
-		if m.quitAfterSave {
-			return m, tea.Quit
-		}
-		m.mode = modeList
-		m.op = opNone
-	case huh.StateCompleted:
-		key := m.conflicts[m.conflictCursor]
-		m.conflictChoice[key] = m.conflictValue
-		m.conflictCursor++
-		return m, m.openConflictForm()
 	}
 	return m, cmd
 }

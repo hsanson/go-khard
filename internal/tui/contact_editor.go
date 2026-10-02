@@ -93,6 +93,11 @@ func (m *model) editorRows() []editorRow {
 		section("file", "vCard file")
 		rows = append(rows, editorRow{key: "file-path", label: "Path", value: m.form.path})
 	}
+	section("actions", "Actions")
+	rows = append(rows,
+		editorRow{key: "form-save", label: "Save"},
+		editorRow{key: "form-cancel", label: "Cancel"},
+	)
 	return rows
 }
 
@@ -114,6 +119,7 @@ func selectableEditorRow(row editorRow) bool {
 
 func removableEditorRow(row editorRow) bool {
 	return selectableEditorRow(row) && !row.add && row.key != "addressbook" &&
+		row.key != "form-save" && row.key != "form-cancel" &&
 		row.key != vcard.FieldFormattedName && row.key != vcard.FieldKind && row.key != vcard.FieldNote &&
 		row.key != vcard.FieldBirthday && row.key != vcard.FieldAnniversary && !isNameKey(row.key)
 }
@@ -127,25 +133,53 @@ func (m *model) currentEditorRow() (editorRow, bool) {
 }
 
 func (m *model) updateActiveEditorForm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
-		m.form.activeForm = nil
-		m.form.tmp = nil
-		return m, nil
+	if key, ok := msg.(tea.KeyMsg); ok {
+		switch key.String() {
+		case "esc", "ctrl+c":
+			m.cancelEditorDialog()
+			return m, nil
+		case "tab", "down":
+			if key.String() == "down" && m.form.activeRow.key == vcard.FieldNote && m.form.dialogFocus == dialogFocusControl {
+				break
+			}
+			m.moveEditorDialogFocus(1)
+			return m, nil
+		case "shift+tab", "up":
+			if key.String() == "up" && m.form.activeRow.key == vcard.FieldNote && m.form.dialogFocus == dialogFocusControl {
+				break
+			}
+			m.moveEditorDialogFocus(-1)
+			return m, nil
+		case "left", "h":
+			if m.form.dialogFocus != dialogFocusControl {
+				m.moveEditorDialogAction(-1)
+				return m, nil
+			}
+		case "right", "l":
+			if m.form.dialogFocus != dialogFocusControl {
+				m.moveEditorDialogAction(1)
+				return m, nil
+			}
+		case "enter":
+			if m.form.dialogFocus != dialogFocusControl {
+				return m.activateEditorDialog()
+			}
+			if m.form.dialogField == m.form.dialogFields-1 {
+				m.submitEditorDialog()
+				return m, nil
+			}
+		case " ":
+			if m.form.dialogFocus != dialogFocusControl {
+				return m.activateEditorDialog()
+			}
+		}
+		if m.form.dialogFocus != dialogFocusControl {
+			return m, nil
+		}
 	}
 	updated, cmd := m.form.activeForm.Update(msg)
 	if form, ok := updated.(*huh.Form); ok {
 		m.form.activeForm = form
-	}
-	switch m.form.activeForm.State {
-	case huh.StateAborted:
-		m.form.activeForm = nil
-		m.form.tmp = nil
-		m.form.tmpTypes = nil
-	case huh.StateCompleted:
-		m.applyEditorPopup()
-		m.form.activeForm = nil
-		m.form.tmp = nil
-		m.form.tmpTypes = nil
 	}
 	return m, cmd
 }
@@ -155,18 +189,180 @@ func (m *model) openEditorPopup(rows []editorRow) tea.Cmd {
 		return nil
 	}
 	row := rows[m.form.cursor]
-	if !selectableEditorRow(row) {
+	if !selectableEditorRow(row) || row.key == "form-save" || row.key == "form-cancel" {
 		return nil
 	}
 	m.form.activeRow = row
 	m.form.tmp = nil
 	m.form.tmpTypes = nil
 	m.form.errMsg = ""
+	m.form.dialogFocus = dialogFocusControl
+	m.form.dialogField = 0
+	m.form.dialogFields = editorFieldCount(row)
+	m.form.bookBeforeDialog = m.form.book
+	m.form.activeForm = nil
+	m.form.datePicker = nil
+	if isContactDateKey(row.key) {
+		m.form.datePicker = newContactDatePicker(m.form.card.Value(row.key), time.Now())
+		return nil
+	}
 	m.form.activeForm = m.buildEditorPopup(row)
 	if m.form.activeForm == nil {
 		return nil
 	}
 	return m.form.activeForm.Init()
+}
+
+func editorFieldCount(row editorRow) int {
+	switch {
+	case row.key == "private-add" || strings.HasPrefix(row.key, "X-"):
+		return 2
+	}
+	switch row.key {
+	case vcard.FieldTelephone, vcard.FieldEmail, vcard.FieldOrganization:
+		return 2
+	case vcard.FieldAddress:
+		return 8
+	default:
+		return 1
+	}
+}
+
+func (m *model) editorDialogHasDelete() bool {
+	return removableEditorRow(m.form.activeRow)
+}
+
+func (m *model) editorDialogFocuses() []dialogFocus {
+	focuses := []dialogFocus{dialogFocusPrimary, dialogFocusCancel}
+	if m.editorDialogHasDelete() {
+		focuses = append(focuses, dialogFocusDelete)
+	}
+	return focuses
+}
+
+func (m *model) setEditorDialogField(index int) {
+	index = max(0, min(index, m.form.dialogFields-1))
+	for m.form.dialogField < index {
+		m.form.activeForm.NextField()
+		m.form.dialogField++
+	}
+	for m.form.dialogField > index {
+		m.form.activeForm.PrevField()
+		m.form.dialogField--
+	}
+}
+
+func (m *model) moveEditorDialogFocus(delta int) {
+	if m.form.dialogFocus == dialogFocusControl {
+		next := m.form.dialogField + delta
+		if next >= 0 && next < m.form.dialogFields {
+			m.setEditorDialogField(next)
+			return
+		}
+		m.form.activeForm.GetFocusedField().Blur()
+		if delta > 0 {
+			m.form.dialogFocus = dialogFocusPrimary
+		} else if m.editorDialogHasDelete() {
+			m.form.dialogFocus = dialogFocusDelete
+		} else {
+			m.form.dialogFocus = dialogFocusCancel
+		}
+		return
+	}
+	focuses := m.editorDialogFocuses()
+	index := 0
+	for i, focus := range focuses {
+		if focus == m.form.dialogFocus {
+			index = i
+			break
+		}
+	}
+	next := index + delta
+	if next >= 0 && next < len(focuses) {
+		m.form.dialogFocus = focuses[next]
+		return
+	}
+	m.form.dialogFocus = dialogFocusControl
+	if delta > 0 {
+		m.setEditorDialogField(0)
+	} else {
+		m.setEditorDialogField(m.form.dialogFields - 1)
+	}
+	m.form.activeForm.GetFocusedField().Focus()
+}
+
+func (m *model) moveEditorDialogAction(delta int) {
+	focuses := m.editorDialogFocuses()
+	index := 0
+	for i, focus := range focuses {
+		if focus == m.form.dialogFocus {
+			index = i
+			break
+		}
+	}
+	m.form.dialogFocus = focuses[(index+delta+len(focuses))%len(focuses)]
+}
+
+func (m *model) cancelEditorDialog() {
+	m.form.book = m.form.bookBeforeDialog
+	m.form.activeForm = nil
+	m.form.datePicker = nil
+	m.form.tmp = nil
+	m.form.tmpTypes = nil
+	m.form.dialogFocus = dialogFocusControl
+}
+
+func (m *model) submitEditorDialog() {
+	if m.form.datePicker != nil {
+		setScalar(m.form.card, m.form.activeRow.key, m.form.datePicker.value())
+		m.form.datePicker = nil
+		m.form.dialogFocus = dialogFocusControl
+		return
+	}
+	m.setEditorDialogField(m.form.dialogFields - 1)
+	m.form.activeForm.NextField()
+	m.form.activeForm.NextGroup()
+	if m.form.activeForm.State != huh.StateCompleted {
+		m.form.dialogFocus = dialogFocusControl
+		return
+	}
+	m.applyEditorPopup()
+	m.form.activeForm = nil
+	m.form.tmp = nil
+	m.form.tmpTypes = nil
+	m.form.dialogFocus = dialogFocusControl
+}
+
+func (m *model) deleteActiveEditorRow() {
+	row := m.form.activeRow
+	if !removableEditorRow(row) {
+		return
+	}
+	m.form.card[row.key] = removeField(m.form.card[row.key], row.index)
+	if len(m.form.card[row.key]) == 0 {
+		delete(m.form.card, row.key)
+	}
+	m.form.activeForm = nil
+	m.form.tmp = nil
+	m.form.tmpTypes = nil
+	m.form.dialogFocus = dialogFocusControl
+	rows := m.editorRows()
+	m.form.cursor = min(m.form.cursor, len(rows)-1)
+	if len(rows) > 0 && !selectableEditorRow(rows[m.form.cursor]) {
+		m.moveEditorCursor(rows, 1)
+	}
+}
+
+func (m *model) activateEditorDialog() (tea.Model, tea.Cmd) {
+	switch m.form.dialogFocus {
+	case dialogFocusPrimary:
+		m.submitEditorDialog()
+	case dialogFocusCancel:
+		m.cancelEditorDialog()
+	case dialogFocusDelete:
+		m.deleteActiveEditorRow()
+	}
+	return m, nil
 }
 
 func (m *model) buildEditorPopup(row editorRow) *huh.Form {
@@ -185,13 +381,13 @@ func (m *model) buildEditorPopup(row editorRow) *huh.Form {
 		}
 		m.form.tmp = []string{name, value}
 		return popup(
-			huh.NewInput().Title("Property name").Description("Letters, digits, and hyphens; stored with an X- prefix").Value(&m.form.tmp[0]).Validate(privateName),
+			huh.NewInput().Title("Property name").Value(&m.form.tmp[0]).Validate(privateName),
 			huh.NewInput().Title("Value").Value(&m.form.tmp[1]),
 		)
 	}
 	if isNameKey(row.key) {
 		m.form.tmp = []string{scalarValue(card, row.key)}
-		return popup(huh.NewInput().Title(row.label).Description("Separate multiple values with commas").Value(&m.form.tmp[0]))
+		return popup(huh.NewInput().Title(row.label).Value(&m.form.tmp[0]))
 	}
 	switch row.key {
 	case vcard.FieldFormattedName:
@@ -207,8 +403,7 @@ func (m *model) buildEditorPopup(row editorRow) *huh.Form {
 			huh.NewOption("Device", "device"),
 		).Value(&m.form.tmp[0]))
 	case vcard.FieldBirthday, vcard.FieldAnniversary:
-		m.form.tmp = []string{displayDate(card.Value(row.key))}
-		return popup(huh.NewInput().Title(row.label + " (YYYY-MM-dd)").Value(&m.form.tmp[0]).Validate(optionalDate))
+		return nil
 	case vcard.FieldTelephone, vcard.FieldEmail:
 		return m.typedPopup(row)
 	case vcard.FieldAddress:
@@ -262,7 +457,7 @@ func (m *model) typedPopup(row editorRow) *huh.Form {
 		valueInput.Validate(validEmail)
 	}
 	return popup(
-		huh.NewMultiSelect[string]().Title("Types").Description("Space toggles types; Enter accepts").Options(options...).Value(&m.form.tmpTypes),
+		huh.NewMultiSelect[string]().Title("Types").Options(options...).Value(&m.form.tmpTypes),
 		valueInput,
 	)
 }
@@ -324,8 +519,7 @@ func (m *model) applyEditorPopup() {
 		setNameComponent(m.form.card, row.key, strings.TrimSpace(m.form.tmp[0]))
 		return
 	}
-	if row.key == vcard.FieldFormattedName || row.key == vcard.FieldKind || row.key == vcard.FieldNote ||
-		row.key == vcard.FieldBirthday || row.key == vcard.FieldAnniversary {
+	if row.key == vcard.FieldFormattedName || row.key == vcard.FieldKind || row.key == vcard.FieldNote {
 		setScalar(m.form.card, row.key, strings.TrimSpace(m.form.tmp[0]))
 		return
 	}
@@ -358,97 +552,57 @@ func (m *model) applyEditorPopup() {
 	}
 }
 
-func (m *model) deleteEditorRow(rows []editorRow) {
-	if len(rows) == 0 || m.form.cursor >= len(rows) {
-		return
-	}
-	row := rows[m.form.cursor]
-	if !removableEditorRow(row) {
-		return
-	}
-	m.form.card[row.key] = removeField(m.form.card[row.key], row.index)
-	if len(m.form.card[row.key]) == 0 {
-		delete(m.form.card, row.key)
-	}
-	rows = m.editorRows()
-	m.form.cursor = min(m.form.cursor, len(rows)-1)
-	if len(rows) > 0 && !selectableEditorRow(rows[m.form.cursor]) {
-		m.moveEditorCursor(rows, 1)
-	}
-}
-
-// NewPreferredFormKeyMap uses j/k-first option navigation and ctrl+enter text newlines.
+// NewPreferredFormKeyMap leaves form traversal to the surrounding dialog.
 func NewPreferredFormKeyMap() *huh.KeyMap {
 	keymap := huh.NewDefaultKeyMap()
 	keymap.Quit.SetKeys("ctrl+c", "esc")
-	keymap.Select.Up.SetHelp("k", "previous")
-	keymap.Select.Down.SetHelp("j", "next")
-	keymap.MultiSelect.Up.SetHelp("k", "previous")
-	keymap.MultiSelect.Down.SetHelp("j", "next")
-	keymap.FilePicker.Up.SetHelp("k", "previous")
-	keymap.FilePicker.Down.SetHelp("j", "next")
-	keymap.Confirm.Toggle.SetKeys("j", "k", "h", "l", "left", "right")
-	keymap.Confirm.Toggle.SetHelp("j/k", "toggle")
-	keymap.Text.NewLine.SetKeys("ctrl+enter")
+
+	keymap.Select.Up.SetKeys("left", "h", "k")
+	keymap.Select.Up.SetHelp("←/k", "previous")
+	keymap.Select.Down.SetKeys("right", "l", "j")
+	keymap.Select.Down.SetHelp("→/j", "next")
+	keymap.MultiSelect.Up.SetKeys("left", "h", "k")
+	keymap.MultiSelect.Up.SetHelp("←/k", "previous")
+	keymap.MultiSelect.Down.SetKeys("right", "l", "j")
+	keymap.MultiSelect.Down.SetHelp("→/j", "next")
+	keymap.Confirm.Toggle.SetKeys("h", "l", "left", "right")
+	keymap.Confirm.Toggle.SetHelp("←/→", "toggle")
+	keymap.Text.NewLine.SetKeys("ctrl+enter", "ctrl+j")
 	keymap.Text.NewLine.SetHelp("ctrl+enter", "new line")
+
+	keymap.Input.Next.SetEnabled(false)
+	keymap.Input.Prev.SetEnabled(false)
+	keymap.Input.Submit.SetEnabled(false)
+	keymap.Text.Next.SetEnabled(false)
+	keymap.Text.Prev.SetEnabled(false)
+	keymap.Text.Submit.SetEnabled(false)
+	keymap.Select.Next.SetEnabled(false)
+	keymap.Select.Prev.SetEnabled(false)
+	keymap.Select.Submit.SetEnabled(false)
+	keymap.MultiSelect.Next.SetEnabled(false)
+	keymap.MultiSelect.Prev.SetEnabled(false)
+	keymap.MultiSelect.Submit.SetEnabled(false)
+	keymap.Confirm.Next.SetEnabled(false)
+	keymap.Confirm.Prev.SetEnabled(false)
+	keymap.Confirm.Submit.SetEnabled(false)
+	keymap.Note.Next.SetEnabled(false)
+	keymap.Note.Prev.SetEnabled(false)
+	keymap.Note.Submit.SetEnabled(false)
+	keymap.FilePicker.Next.SetEnabled(false)
+	keymap.FilePicker.Prev.SetEnabled(false)
+	keymap.FilePicker.Submit.SetEnabled(false)
 	return keymap
 }
 
-// NewPreferredMultiFieldFormKeyMap uses ctrl+j/ctrl+k for field navigation.
-// Tab and shift+tab remain supported; enter advances and submits from final field.
+// NewPreferredMultiFieldFormKeyMap uses the surrounding dialog for focus traversal.
 func NewPreferredMultiFieldFormKeyMap() *huh.KeyMap {
-	keymap := NewPreferredFormKeyMap()
-
-	keymap.Input.Next.SetKeys("enter", "tab", "ctrl+j")
-	keymap.Input.Next.SetHelp("ctrl+j", "next")
-	keymap.Input.Prev.SetKeys("shift+tab", "ctrl+k")
-	keymap.Input.Prev.SetHelp("ctrl+k", "previous")
-
-	keymap.Text.Next.SetKeys("enter", "tab", "ctrl+j")
-	keymap.Text.Next.SetHelp("ctrl+j", "next")
-	keymap.Text.Prev.SetKeys("shift+tab", "ctrl+k")
-	keymap.Text.Prev.SetHelp("ctrl+k", "previous")
-	keymap.Text.NewLine.SetKeys("ctrl+enter")
-	keymap.Text.NewLine.SetHelp("ctrl+enter", "new line")
-
-	keymap.Select.Next.SetKeys("enter", "tab", "ctrl+j")
-	keymap.Select.Next.SetHelp("ctrl+j", "next")
-	keymap.Select.Prev.SetKeys("shift+tab", "ctrl+k")
-	keymap.Select.Prev.SetHelp("ctrl+k", "previous")
-	keymap.Select.Up.SetKeys("up", "k", "ctrl+p")
-	keymap.Select.Down.SetKeys("down", "j", "ctrl+n")
-
-	keymap.MultiSelect.Next.SetKeys("enter", "tab", "ctrl+j")
-	keymap.MultiSelect.Next.SetHelp("ctrl+j", "next")
-	keymap.MultiSelect.Prev.SetKeys("shift+tab", "ctrl+k")
-	keymap.MultiSelect.Prev.SetHelp("ctrl+k", "previous")
-	keymap.MultiSelect.Up.SetKeys("up", "k", "ctrl+p")
-	keymap.MultiSelect.Down.SetKeys("down", "j", "ctrl+n")
-
-	keymap.Confirm.Next.SetKeys("enter", "tab", "ctrl+j")
-	keymap.Confirm.Next.SetHelp("ctrl+j", "next")
-	keymap.Confirm.Prev.SetKeys("shift+tab", "ctrl+k")
-	keymap.Confirm.Prev.SetHelp("ctrl+k", "previous")
-
-	keymap.Note.Next.SetKeys("enter", "tab", "ctrl+j")
-	keymap.Note.Next.SetHelp("ctrl+j", "next")
-	keymap.Note.Prev.SetKeys("shift+tab", "ctrl+k")
-	keymap.Note.Prev.SetHelp("ctrl+k", "previous")
-
-	keymap.FilePicker.Next.SetKeys("tab", "ctrl+j")
-	keymap.FilePicker.Next.SetHelp("ctrl+j", "next")
-	keymap.FilePicker.Prev.SetKeys("shift+tab", "ctrl+k")
-	keymap.FilePicker.Prev.SetHelp("ctrl+k", "previous")
-	keymap.FilePicker.Up.SetKeys("up", "k", "ctrl+p")
-	keymap.FilePicker.Down.SetKeys("down", "j", "ctrl+n")
-
-	return keymap
+	return NewPreferredFormKeyMap()
 }
 
 func popup(fields ...huh.Field) *huh.Form {
 	return huh.NewForm(huh.NewGroup(fields...)).
 		WithKeyMap(NewPreferredMultiFieldFormKeyMap()).
-		WithShowHelp(true).
+		WithShowHelp(false).
 		WithShowErrors(true)
 }
 func required(label string) func(string) error {
@@ -458,16 +612,6 @@ func required(label string) func(string) error {
 		}
 		return nil
 	}
-}
-func optionalDate(value string) error {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	if _, err := time.Parse("2006-01-02", value); err != nil {
-		return errors.New("date must use YYYY-MM-dd")
-	}
-	return nil
 }
 func validEmail(value string) error {
 	value = strings.TrimSpace(value)
@@ -489,6 +633,10 @@ func privateName(value string) error {
 	}
 	return nil
 }
+func isContactDateKey(key string) bool {
+	return key == vcard.FieldBirthday || key == vcard.FieldAnniversary
+}
+
 func scalarValue(card vcard.Card, key string) string {
 	if !isNameKey(key) {
 		if key == vcard.FieldBirthday || key == vcard.FieldAnniversary {

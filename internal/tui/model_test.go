@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/emersion/go-vcard"
@@ -23,38 +24,53 @@ func TestEscapeQuitsContactList(t *testing.T) {
 	}
 }
 
-func TestAddressbookFilterSelectsOneBookOrAll(t *testing.T) {
+func TestTabCyclesAddressbooksAndPreservesSearch(t *testing.T) {
 	one := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
 	two := config.Source{Path: "/tmp/two", Type: "addressbook", DisplayName: "Two"}
 	contacts := []contact.Contact{
-		{Path: "/tmp/one/a.vcf", Book: one, Card: vcard.Card{}},
-		{Path: "/tmp/two/b.vcf", Book: two, Card: vcard.Card{}},
+		{Path: "/tmp/one/a.vcf", Book: one, Card: vcard.Card{vcard.FieldFormattedName: []*vcard.Field{{Value: "Ada"}}}},
+		{Path: "/tmp/two/b.vcf", Book: two, Card: vcard.Card{vcard.FieldFormattedName: []*vcard.Field{{Value: "Bob"}}}},
 	}
+	search := textinput.New()
+	search.SetValue("ada")
 	m := &model{
-		mode:     modeList,
-		books:    []config.Source{one, two},
-		contacts: contacts,
-		visible:  contacts,
-		selected: map[string]bool{contacts[1].Path: true},
+		mode: modeList, books: []config.Source{one, two}, contacts: contacts,
+		selected: map[string]bool{contacts[1].Path: true}, search: search,
 	}
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	if m.mode != modeAddressbookFilter || m.filterBookCursor != 0 {
-		t.Fatalf("b did not open addressbook filter: mode=%v cursor=%d", m.mode, m.filterBookCursor)
-	}
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mode != modeList || m.filterBook != one.Path || len(m.visible) != 1 || m.visible[0].Book.Path != one.Path {
-		t.Fatalf("book filter not applied: mode=%v filter=%q visible=%#v", m.mode, m.filterBook, m.visible)
-	}
-	if m.selectedCount() != 0 {
-		t.Fatal("addressbook filter retained hidden selections")
-	}
+	m.filter()
 
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if m.filterBook != one.Path || len(m.visible) != 1 || m.visible[0].Path != contacts[0].Path {
+		t.Fatalf("next addressbook: filter=%q visible=%#v", m.filterBook, m.visible)
+	}
+	if m.selectedCount() != 0 || m.search.Value() != "ada" {
+		t.Fatalf("addressbook cycle selection=%d query=%q", m.selectedCount(), m.search.Value())
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.filterBook != "" || len(m.visible) != 1 {
+		t.Fatalf("previous addressbook: filter=%q visible=%#v", m.filterBook, m.visible)
+	}
+}
+
+func TestSearchFiltersAndNavigatesLive(t *testing.T) {
+	search := textinput.New()
+	contacts := []contact.Contact{
+		{Path: "ada", Card: vcard.Card{vcard.FieldFormattedName: []*vcard.Field{{Value: "Ada Lovelace"}}}},
+		{Path: "alan", Card: vcard.Card{vcard.FieldFormattedName: []*vcard.Field{{Value: "Alan Turing"}}}},
+	}
+	m := &model{mode: modeList, contacts: contacts, visible: contacts, selected: map[string]bool{}, search: search}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if m.mode != modeSearch || len(m.visible) != 2 {
+		t.Fatalf("live search: mode=%v visible=%d", m.mode, len(m.visible))
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if m.cursor != 1 {
+		t.Fatalf("Ctrl-J cursor = %d", m.cursor)
+	}
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.filterBook != "" || len(m.visible) != 2 {
-		t.Fatalf("All filter not applied: filter=%q visible=%d", m.filterBook, len(m.visible))
+	if m.mode != modeList || m.search.Value() != "a" || len(m.visible) != 2 {
+		t.Fatalf("kept search: mode=%v query=%q visible=%d", m.mode, m.search.Value(), len(m.visible))
 	}
 }
 
@@ -73,16 +89,87 @@ func TestTableCellUsesTerminalDisplayWidth(t *testing.T) {
 	}
 }
 
-func TestControlDDeletesAndPlainDIsUnbound(t *testing.T) {
-	entry := contact.Contact{Card: vcard.Card{}}
-	m := &model{mode: modeList, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
+func TestMoveAndDeleteRequireSelections(t *testing.T) {
+	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
+	entry := contact.Contact{Path: "/tmp/one/a.vcf", Book: book, Card: make(vcard.Card)}
+	m := &model{mode: modeList, books: []config.Source{book}, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if m.mode != modeList || m.op != opNone {
-		t.Fatalf("plain d started deletion: mode=%v op=%v", m.mode, m.op)
+		t.Fatalf("unselected action: mode=%v op=%v", m.mode, m.op)
 	}
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m.selected[entry.Path] = true
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if m.mode != modeBooks || m.op != opMove {
+		t.Fatalf("m action: mode=%v op=%v", m.mode, m.op)
+	}
+	m.cancelBookOperation()
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if m.mode != modeConfirm || m.op != opDelete {
-		t.Fatalf("ctrl+d did not start deletion: mode=%v op=%v", m.mode, m.op)
+		t.Fatalf("d action: mode=%v op=%v", m.mode, m.op)
+	}
+}
+
+func TestMouseSelectsAndOpensContacts(t *testing.T) {
+	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
+	entry := contact.Contact{Path: "/tmp/one/a.vcf", Book: book, Card: vcard.Card{vcard.FieldFormattedName: []*vcard.Field{{Value: "Ada"}}}}
+	m := &model{
+		mode: modeList, width: 100, height: 20, books: []config.Source{book},
+		contacts: []contact.Contact{entry}, visible: []contact.Contact{entry},
+		selected: map[string]bool{}, mouse: &mouseState{},
+	}
+	_ = m.View()
+	var contactHit mouseHit
+	for _, hit := range m.mouse.hits {
+		if hit.kind == mouseContact {
+			contactHit = hit
+			break
+		}
+	}
+	_, _ = m.Update(tea.MouseMsg(tea.MouseEvent{
+		X: contactHit.rect.x, Y: contactHit.rect.y, Ctrl: true,
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	}))
+	if !m.selected[entry.Path] || m.mode != modeList {
+		t.Fatalf("Ctrl-click selected=%v mode=%v", m.selected[entry.Path], m.mode)
+	}
+	_ = m.View()
+	for _, hit := range m.mouse.hits {
+		if hit.kind == mouseContact {
+			contactHit = hit
+			break
+		}
+	}
+	_, _ = m.Update(tea.MouseMsg(tea.MouseEvent{
+		X: contactHit.rect.x, Y: contactHit.rect.y,
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	}))
+	if m.mode != modeForm || m.form.editing == nil {
+		t.Fatalf("contact click mode=%v editing=%#v", m.mode, m.form.editing)
+	}
+}
+
+func TestMouseAddressbookLabelCyclesFilter(t *testing.T) {
+	one := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
+	two := config.Source{Path: "/tmp/two", Type: "addressbook", DisplayName: "Two"}
+	m := &model{
+		mode: modeList, width: 100, height: 20, books: []config.Source{one, two},
+		selected: map[string]bool{}, mouse: &mouseState{},
+	}
+	_ = m.View()
+	var bookHit mouseHit
+	for _, hit := range m.mouse.hits {
+		if hit.kind == mouseAddressbook {
+			bookHit = hit
+			break
+		}
+	}
+	_, _ = m.Update(tea.MouseMsg(tea.MouseEvent{
+		X: bookHit.rect.x, Y: bookHit.rect.y,
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
+	}))
+	if m.filterBook != one.Path {
+		t.Fatalf("addressbook click filter = %q", m.filterBook)
 	}
 }
 
@@ -139,55 +226,6 @@ func TestAddEmailCreateNewPrefillsSender(t *testing.T) {
 	if m.form.card.Value(vcard.FieldFormattedName) != "Ada Lovelace" ||
 		m.form.card.Value(vcard.FieldEmail) != "ada@example.net" {
 		t.Fatalf("prefilled card = %#v", m.form.card)
-	}
-}
-
-func TestContactListLegendContainsOnlyCommonShortcuts(t *testing.T) {
-	m := &model{mode: modeList}
-	want := "[esc/q] Exit  [j/k] Next / Prev  [/] Search  [enter] Open  [n] New  [?] Help"
-	if got := m.shortcutsLegend(); got != want {
-		t.Fatalf("contact list legend = %q, want %q", got, want)
-	}
-	for _, hidden := range []string{"space", "[b]", "[c]", "[x]", "ctrl+d", "[M]", "↑", "↓"} {
-		if strings.Contains(m.shortcutsLegend(), hidden) {
-			t.Fatalf("contact list legend contains less-common shortcut %q: %q", hidden, m.shortcutsLegend())
-		}
-	}
-	help := strings.Join(m.helpLines(), "\n")
-	for _, shortcut := range []string{"↑/↓", "space", "Filter by addressbook", "Copy", "Move", "Delete", "Merge"} {
-		if !strings.Contains(help, shortcut) {
-			t.Fatalf("contact help omits %q:\n%s", shortcut, help)
-		}
-	}
-}
-
-func TestContactStatsRenderTopRightAndLegendAtBottom(t *testing.T) {
-	contacts := []contact.Contact{{Card: make(vcard.Card)}, {Card: make(vcard.Card)}}
-	m := &model{mode: modeList, width: 120, height: 30, contacts: contacts, visible: contacts, selected: map[string]bool{}}
-	view := m.View()
-	statsAt := strings.Index(view, "2 contacts · 0 selected")
-	tableAt := strings.Index(view, "NAME")
-	legendAt := strings.Index(view, "[esc/q] Exit")
-	if statsAt < 0 || tableAt < 0 || legendAt < 0 || statsAt > tableAt || legendAt < tableAt {
-		t.Fatalf("unexpected list layout: stats=%d table=%d legend=%d\n%s", statsAt, tableAt, legendAt, view)
-	}
-}
-
-func TestLessCommonListShortcutsAppearInContextualHelp(t *testing.T) {
-	m := &model{mode: modeList, width: 100, height: 30}
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
-	m = updated.(*model)
-	if !m.showHelp {
-		t.Fatal("? did not open contact-list help")
-	}
-	view := m.View()
-	if !strings.Contains(view, "Copy selected contacts") || !strings.Contains(view, "Merge selected contacts") {
-		t.Fatalf("contact-list help omits less-common operations:\n%s", view)
-	}
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	m = updated.(*model)
-	if m.showHelp {
-		t.Fatal("q did not close help")
 	}
 }
 
