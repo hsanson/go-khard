@@ -65,41 +65,55 @@ go-khard
 The default configuration is `~/.config/go-khal/config.json`. Only sources with
 `"type": "addressbook"` are loaded. Use `--config PATH` to select another file.
 
-The main view provides fuzzy search by name, email, or phone and displays name,
-address book, email addresses, and phone numbers as columns.
+The main view displays each contact's name, address book, preferred email, and
+preferred phone. Press `/` to search names, email addresses, and phone numbers
+with fuzzy matching. While searching, use `ctrl-j`/`ctrl-k` or the arrow keys to
+move through results. Press `enter` to keep the filter or `esc` to clear it.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` | move |
-| `/` | fuzzy search |
+| `j` / `k` or `up` / `down` | move |
+| `ctrl-f` / `ctrl-b` or `page-down` / `page-up` | move one page |
+| `/` | search contacts |
+| `tab` / `shift-tab` | cycle through All and each address book |
 | `enter` | edit contact |
-| `n` | new contact |
-| `space` | select/unselect |
-| `b` | filter by addressbook |
-| `c` / `x` | copy/move selected contacts |
-| `ctrl-d` | delete selected contacts |
+| `n` | create contact |
+| `space` | select/unselect contact |
+| `c` | copy the current or selected contacts |
+| `m` | move selected contacts |
 | `M` | merge two or more selected contacts |
+| `d` | delete selected contacts |
 | `q` / `esc` | quit |
 | `?` | show shortcuts for the current screen |
 
-Copy, move, and delete require confirmation. Merge combines list-valued fields,
-prompts for scalar conflicts, opens a final review form, and then saves to the
-selected address book before removing duplicates.
+Move, merge, and delete appear only when enough contacts are selected. Copy,
+move, and delete require confirmation. Merge combines list-valued fields,
+prompts for scalar conflicts, opens a review form, and asks for final
+confirmation before saving the merged contact and removing its sources.
 
-Shortcut labels appear at the bottom and contain only common actions for the
-current screen. Press `?` for all relevant shortcuts, including selection,
-addressbook filtering, copy, move, merge, and deletion on the contact list.
+The footer lists every shortcut available in the current screen or dialog.
+Field dialogs contain no shortcut labels.
 
 The add, edit, and merge-review screens use a sectioned item editor covering
-the complete khard contact template: identity and structured names, kind,
-nicknames, dates, organizations, titles and roles, typed phone numbers and
-emails, structured postal addresses, categories, webpages, private `X-*`
-properties, and notes. Use `j`/`k` to navigate editable rows, `enter` to open a
-field popup, highlighted `+ Add …` rows to append repeatable values, `ctrl+d` to
-remove a repeatable entry, and `ctrl+s` to save. Press `q` or `esc` to return to
-the contact list. Field popups use `ctrl+j`/`ctrl+k` to move between fields and
-`ctrl+enter` to insert a newline in text fields; tab and shift-tab remain
-supported.
+identity and structured names, kind, nicknames, dates, organizations, titles,
+roles, typed phone numbers and emails, structured postal addresses, categories,
+webpages, private `X-*` properties, and notes. Use `j`/`k`, the arrow keys, or
+tab/shift-tab to navigate. Highlighted `󰐕 Add …` buttons append repeatable
+values. Save and Cancel buttons finish the contact form.
+
+All dialogs use 60% of the terminal width. Field overlays reserve action slots
+for Apply, Cancel, and the optional Delete button. Existing repeatable items
+have a red Delete button. Tab/down and shift-tab/up move
+through fields and buttons; Enter on the final field applies the form directly.
+Select fields also use `j`/`k`, `h`/`l`, or left/right to change options. In the
+Note field, up/down moves the cursor and `ctrl-enter` inserts a newline.
+
+Birthday and Anniversary use a single-date calendar with keyboard and mouse
+navigation, Today, Clear, Apply, and Cancel controls. Empty and legacy vCard
+dates remain unchanged until a date is explicitly selected or cleared.
+
+Mouse input supports wheel navigation, address-book cycling, contact and field
+opening, and every visible button. Ctrl-click selects or unselects a contact.
 
 Phone and email entries allow multiple types, while address entries use a
 single type. Extra type labels can be added to the shared configuration:
