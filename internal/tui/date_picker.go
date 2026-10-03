@@ -102,10 +102,14 @@ func (p *contactDatePicker) update(msg tea.KeyMsg) {
 	switch msg.String() {
 	case "space", " ":
 		p.clear()
-	case "[", "pgup":
+	case "[", "pgup", "ctrl+k":
 		p.moveMonth(-1)
-	case "]", "pgdown":
+	case "]", "pgdown", "ctrl+j":
 		p.moveMonth(1)
+	case "ctrl+h":
+		p.moveMonth(-12)
+	case "ctrl+l":
+		p.moveMonth(12)
 	case "left", "h":
 		p.moveDays(-1)
 	case "right", "l":
@@ -120,14 +124,16 @@ func (p *contactDatePicker) update(msg tea.KeyMsg) {
 }
 
 func (p *contactDatePicker) render(styles Styles) (string, []mouseHit) {
-	header := fmt.Sprintf("%-18s ‹ ›", p.month.Format("January 2006"))
+	header := fmt.Sprintf("%-18s « ‹ › »", p.month.Format("January 2006"))
 	lines := []string{
 		styles.Accent.Render(header),
 		styles.Dim.Render("Mo Tu We Th Fr Sa Su"),
 	}
 	hits := []mouseHit{
-		{rect: mouseRect{x: 19, y: 0, width: 1, height: 1}, kind: mouseDatePreviousMonth},
-		{rect: mouseRect{x: 21, y: 0, width: 1, height: 1}, kind: mouseDateNextMonth},
+		{rect: mouseRect{x: 19, y: 0, width: 1, height: 1}, kind: mouseDatePreviousYear},
+		{rect: mouseRect{x: 21, y: 0, width: 1, height: 1}, kind: mouseDatePreviousMonth},
+		{rect: mouseRect{x: 23, y: 0, width: 1, height: 1}, kind: mouseDateNextMonth},
+		{rect: mouseRect{x: 25, y: 0, width: 1, height: 1}, kind: mouseDateNextYear},
 	}
 	firstWeekday := (int(p.month.Weekday()) + 6) % 7
 	monthEnd := p.month.AddDate(0, 1, -1).Day()

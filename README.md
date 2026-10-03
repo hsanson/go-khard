@@ -119,7 +119,9 @@ Select fields also use `j`/`k`, `h`/`l`, or left/right to change options. In the
 Note field, up/down moves the cursor and `ctrl-enter` inserts a newline.
 
 Birthday and Anniversary use a single-date calendar with keyboard and mouse
-navigation, Today, Clear, Apply, and Cancel controls. Empty and legacy vCard
+navigation, Today, Clear, Apply, and Cancel controls. The `‹`/`›` buttons move
+one month and `«`/`»` move one year; `ctrl+k`/`ctrl+j` and
+`ctrl+h`/`ctrl+l` provide the same keyboard navigation. Empty and legacy vCard
 dates remain unchanged until a date is explicitly selected or cleared.
 
 Mouse input supports wheel navigation, address-book cycling, contact and field

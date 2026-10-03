@@ -16,8 +16,10 @@ const (
 	mouseEmailMatch
 	mouseDialogAction
 	mouseDateDay
+	mouseDatePreviousYear
 	mouseDatePreviousMonth
 	mouseDateNextMonth
+	mouseDateNextYear
 	mouseDateToday
 	mouseDateClear
 )
@@ -169,15 +171,19 @@ func (m *model) updateMouse(event tea.MouseEvent) (tea.Model, tea.Cmd) {
 		}
 	case mouseDialogAction:
 		return m.activateMouseDialog(hit.focus)
-	case mouseDateDay, mouseDatePreviousMonth, mouseDateNextMonth, mouseDateToday, mouseDateClear:
+	case mouseDateDay, mouseDatePreviousYear, mouseDatePreviousMonth, mouseDateNextMonth, mouseDateNextYear, mouseDateToday, mouseDateClear:
 		if picker := m.form.datePicker; picker != nil {
 			switch hit.kind {
 			case mouseDateDay:
 				picker.selectDate(hit.day)
+			case mouseDatePreviousYear:
+				picker.moveMonth(-12)
 			case mouseDatePreviousMonth:
 				picker.moveMonth(-1)
 			case mouseDateNextMonth:
 				picker.moveMonth(1)
+			case mouseDateNextYear:
+				picker.moveMonth(12)
 			case mouseDateToday:
 				picker.selectDate(time.Now())
 			case mouseDateClear:

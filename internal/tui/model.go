@@ -851,7 +851,7 @@ func (m *model) shortcutsLegend() string {
 		return "[type] Search  [↑/↓ ctrl-j/ctrl-k] Move  [tab/shift+tab] Addressbook  [enter] Keep  [esc] Clear  [?] Help"
 	case modeForm:
 		if m.form.datePicker != nil {
-			return "[h/l ←/→] Day  [j/k ↑/↓] Week  [[/]] Month  [t] Today  [space] Clear  [tab/shift+tab] Actions  [enter] Apply  [esc/q] Cancel"
+			return "[h/l ←/→] Day  [j/k ↑/↓] Week  [ctrl+k/j] Month  [ctrl+h/l] Year  [[/]] Month  [t] Today  [space] Clear  [tab/shift+tab] Actions  [enter] Apply  [esc/q] Cancel"
 		}
 		if m.form.activeForm != nil {
 			if m.form.activeRow.key == vcard.FieldNote {

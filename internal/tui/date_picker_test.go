@@ -50,6 +50,28 @@ func TestContactDatePickerPreservesOptionalAndLegacyValues(t *testing.T) {
 	}
 }
 
+func TestContactDatePickerNavigatesMonthsAndYears(t *testing.T) {
+	month := newContactDatePicker("2025-01-31", time.Time{})
+	month.update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if got := month.value(); got != "2025-02-28" {
+		t.Fatalf("Ctrl-J date = %q", got)
+	}
+	month.update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if got := month.value(); got != "2025-01-28" {
+		t.Fatalf("Ctrl-K date = %q", got)
+	}
+
+	year := newContactDatePicker("2024-02-29", time.Time{})
+	year.update(tea.KeyMsg{Type: tea.KeyCtrlH})
+	if got := year.value(); got != "2023-02-28" {
+		t.Fatalf("Ctrl-H date = %q", got)
+	}
+	year.update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	if got := year.value(); got != "2024-02-28" {
+		t.Fatalf("Ctrl-L date = %q", got)
+	}
+}
+
 func TestBirthdayUsesCalendarAndAppliesSelectedDate(t *testing.T) {
 	m := &model{mode: modeForm, width: 100, height: 40, form: formState{card: make(vcard.Card)}}
 	rows := m.editorRows()
@@ -101,5 +123,44 @@ func TestCalendarMouseSelectsAndClearsDate(t *testing.T) {
 	_, _ = m.updateMouse(tea.MouseEvent{X: clear.rect.x, Y: clear.rect.y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
 	if got := m.form.datePicker.value(); got != "" {
 		t.Fatalf("mouse-cleared date = %q", got)
+	}
+}
+
+func TestCalendarMouseNavigatesMonthsAndYears(t *testing.T) {
+	m := &model{
+		mode: modeForm, width: 100, height: 40, mouse: &mouseState{},
+		form: formState{
+			card: make(vcard.Card), activeRow: editorRow{key: vcard.FieldBirthday, label: "Birthday"},
+			datePicker: newContactDatePicker("2024-02-29", time.Time{}),
+		},
+	}
+	view := m.View()
+	if !strings.Contains(view, "« ‹ › »") {
+		t.Fatalf("calendar navigation controls missing:\n%s", view)
+	}
+
+	for _, step := range []struct {
+		kind mouseTarget
+		want string
+	}{
+		{mouseDateNextYear, "2025-02-28"},
+		{mouseDatePreviousMonth, "2025-01-28"},
+		{mouseDateNextMonth, "2025-02-28"},
+		{mouseDatePreviousYear, "2024-02-28"},
+	} {
+		var target mouseHit
+		for _, hit := range m.mouse.hits {
+			if hit.kind == step.kind {
+				target = hit
+				break
+			}
+		}
+		if target.kind == 0 {
+			t.Fatalf("calendar mouse target %d missing: %#v", step.kind, m.mouse.hits)
+		}
+		_, _ = m.updateMouse(tea.MouseEvent{X: target.rect.x, Y: target.rect.y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		if got := m.form.datePicker.value(); got != step.want {
+			t.Fatalf("mouse target %d date = %q, want %q", step.kind, got, step.want)
+		}
 	}
 }
