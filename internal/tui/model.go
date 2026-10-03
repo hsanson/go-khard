@@ -101,15 +101,10 @@ type model struct {
 	quitAfterSave                 bool
 	dialogFocus                   dialogFocus
 	mouse                         *mouseState
+	styles                        Styles
+	formTheme                     *huh.Theme
+	themeMonitor                  *themeMonitor
 }
-
-var accent = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
-var dim = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-var fieldNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
-var fieldValueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-var selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62"))
-
-var errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 
 func Run(store *contact.Store, cfg *config.Config) error {
 	contacts, err := store.Load()
@@ -120,6 +115,8 @@ func Run(store *contact.Store, cfg *config.Config) error {
 	in.Prompt = "/ "
 	in.Placeholder = "name, email, or phone"
 	m := &model{store: store, cfg: cfg, contacts: contacts, selected: map[string]bool{}, search: in, books: cfg.Addressbooks(), conflictChoice: map[string]string{}, mouse: &mouseState{}}
+	m.initTheme()
+	defer m.themeMonitor.close()
 	m.filter()
 	_, err = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
@@ -149,6 +146,8 @@ func RunAddEmail(store *contact.Store, cfg *config.Config, sender *mail.Address)
 		emailMatches: contact.SimilarContacts(contacts, sender.Name, sender.Address),
 		mouse:        &mouseState{},
 	}
+	m.initTheme()
+	defer m.themeMonitor.close()
 	if len(m.emailMatches) == 0 {
 		m.startForm(&m.emailSender, nil)
 		m.form.editing = nil
@@ -159,9 +158,39 @@ func RunAddEmail(store *contact.Store, cfg *config.Config, sender *mail.Address)
 	_, err = tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
-func (m *model) Init() tea.Cmd { return nil }
+
+func (m *model) initTheme() {
+	var theme themeStyles
+	m.themeMonitor, theme = newThemeMonitor()
+	m.applyTheme(theme)
+}
+
+func (m *model) applyTheme(theme themeStyles) {
+	m.styles = theme.styles
+	if m.formTheme == nil {
+		m.formTheme = theme.formTheme
+	} else {
+		*m.formTheme = *theme.formTheme
+	}
+	m.search.PromptStyle = m.styles.Accent
+	m.search.TextStyle = m.styles.FieldValue
+	m.search.PlaceholderStyle = m.styles.Dim
+	m.search.CompletionStyle = m.styles.Dim
+	m.search.Cursor.Style = m.styles.Accent
+}
+
+func (m *model) ensureTheme() {
+	if m.formTheme == nil {
+		m.applyTheme(defaultInteractiveTheme())
+	}
+}
+
+func (m *model) Init() tea.Cmd { return m.themeMonitor.wait() }
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case themeStylesMsg:
+		m.applyTheme(msg.theme)
+		return m, m.themeMonitor.wait()
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -375,10 +404,11 @@ func (m *model) footerView() string {
 	if m.width > 1 {
 		legend = ansi.Wordwrap(legend, m.width-1, "")
 	}
-	return dim.Render(" " + legend)
+	return m.styles.Dim.Render(" " + legend)
 }
 
 func (m *model) View() string {
+	m.ensureTheme()
 	if m.mouse == nil {
 		m.mouse = &mouseState{}
 	}
@@ -407,20 +437,27 @@ func (m *model) View() string {
 		content = lipgloss.NewStyle().Height(mainHeight).MaxHeight(mainHeight).Render(content)
 	}
 	if footer := m.footerView(); footer != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, content, "", footer)
+		content = lipgloss.JoinVertical(lipgloss.Left, content, "", footer)
 	}
-	return content
+	surface := m.styles.Surface
+	if m.width > 0 {
+		surface = surface.Width(m.width)
+	}
+	if m.height > 0 {
+		surface = surface.Height(m.height)
+	}
+	return surface.Render(content)
 }
 
 func (m *model) emailMatchesView() string {
 	var b strings.Builder
 	optionHits := make([]mouseHit, 0, len(m.emailMatches)+1)
-	b.WriteString(accent.Render("Similar contacts") + "\n")
-	b.WriteString(dim.Render("Choose a contact to merge with the email sender, or create a new contact.") + "\n\n")
+	b.WriteString(m.styles.Accent.Render("Similar contacts") + "\n")
+	b.WriteString(m.styles.Dim.Render("Choose a contact to merge with the email sender, or create a new contact.") + "\n\n")
 	for i, candidate := range m.emailMatches {
-		line := "  " + candidate.Name() + "  " + dim.Render(candidate.PreferredEmail()+" · "+candidate.Book.Name())
+		line := "  " + candidate.Name() + "  " + m.styles.Dim.Render(candidate.PreferredEmail()+" · "+candidate.Book.Name())
 		if i == m.emailMatchCursor && m.dialogFocus == dialogFocusControl {
-			line = selectedStyle.Render("› " + strings.TrimPrefix(line, "  "))
+			line = m.styles.Selected.Render("› " + strings.TrimPrefix(line, "  "))
 		}
 		optionHits = append(optionHits, mouseHit{rect: mouseRect{x: 0, y: 3 + i, width: max(1, ansi.StringWidth(line)), height: 1}, kind: mouseEmailMatch, index: i})
 		b.WriteString(line + "\n")
@@ -428,14 +465,14 @@ func (m *model) emailMatchesView() string {
 	createIndex := len(m.emailMatches)
 	line := "  Create new"
 	if m.emailMatchCursor == createIndex && m.dialogFocus == dialogFocusControl {
-		line = selectedStyle.Render("› Create new")
+		line = m.styles.Selected.Render("› Create new")
 	}
 	optionHits = append(optionHits, mouseHit{rect: mouseRect{x: 0, y: 3 + createIndex, width: max(1, ansi.StringWidth(line)), height: 1}, kind: mouseEmailMatch, index: createIndex})
 	b.WriteString(line)
 	content, actionHits := dialogWithActions(b.String(), []dialogAction{
 		{label: "Apply", focus: dialogFocusPrimary},
 		{label: "Cancel", focus: dialogFocusCancel},
-	}, m.dialogFocus)
+	}, m.dialogFocus, m.styles)
 	return m.centerDialog(content, append(optionHits, actionHits...))
 }
 
@@ -445,9 +482,9 @@ func (m *model) listView() string {
 	b.WriteString(m.listHeader() + "\n")
 	y++
 	if m.message != "" {
-		message := dim.Render(m.message)
+		message := m.styles.Dim.Render(m.message)
 		if m.messageErr {
-			message = errorStyle.Render(m.message)
+			message = m.styles.Error.Render(m.message)
 		}
 		b.WriteString(" " + message + "\n")
 		y++
@@ -460,7 +497,7 @@ func (m *model) listView() string {
 	emailW := max(18, (m.width*28)/100)
 	phoneW := max(12, m.width-nameW-bookW-emailW-9)
 	header := "   " + tableCell("NAME", nameW) + " " + tableCell("ADDRESSBOOK", bookW) + " " + tableCell("EMAIL", emailW) + " " + tableCell("PHONE", phoneW)
-	b.WriteString(dim.Render(header) + "\n")
+	b.WriteString(m.styles.Dim.Render(header) + "\n")
 	y++
 	end := min(len(m.visible), m.offset+m.pageSize())
 	for i := m.offset; i < end; i++ {
@@ -479,22 +516,22 @@ func (m *model) listView() string {
 			tableCell(contact.PreferredEmail(), emailW) + " " +
 			tableCell(contact.PreferredPhone(), phoneW)
 		if i == m.cursor {
-			line = selectedStyle.Render(line)
+			line = m.styles.Selected.Render(line)
 		}
 		m.addMouseHit(mouseHit{rect: mouseRect{x: 0, y: y, width: max(1, m.width), height: 1}, kind: mouseContact, index: i})
 		b.WriteString(line + "\n")
 		y++
 	}
 	if len(m.visible) == 0 {
-		b.WriteString(dim.Render("   No matches") + "\n")
+		b.WriteString(m.styles.Dim.Render("   No matches") + "\n")
 	}
 	return b.String()
 }
 
 func (m *model) listHeader() string {
-	title := accent.Render(" go-khard — Contacts ")
+	title := m.styles.Accent.Render(" go-khard — Contacts ")
 	statsText := fmt.Sprintf(" %d   %d   %s ", len(m.visible), m.selectedCount(), m.filterBookName())
-	stats := dim.Render(statsText)
+	stats := m.styles.Dim.Render(statsText)
 	gap := max(1, m.width-lipgloss.Width(title)-lipgloss.Width(stats))
 	statsX := lipgloss.Width(title) + gap
 	bookPrefix := fmt.Sprintf(" %d   %d   ", len(m.visible), m.selectedCount())
@@ -504,42 +541,32 @@ func (m *model) listHeader() string {
 	})
 	return title + strings.Repeat(" ", gap) + stats
 }
-func renderButton(action dialogAction, selected bool) string {
-	background := lipgloss.Color("238")
-	foreground := lipgloss.Color("230")
-	label, padding := action.label, 1
-	underline := false
+func renderButton(action dialogAction, selected bool, styles Styles) string {
+	style := styles.Button
 	if action.focus == dialogFocusPrimary {
-		background = lipgloss.Color("62")
+		style = styles.PrimaryButton
 	}
 	if action.destructive {
-		background = lipgloss.Color("160")
+		style = styles.DestructiveButton
 	}
+	label := action.label
 	if selected {
-		background = lipgloss.Color("117")
+		style = styles.FocusedButton
 		if action.destructive {
-			background = lipgloss.Color("196")
-			foreground = lipgloss.Color("232")
-			label, padding = "›"+label+"‹", 0
-			underline = true
+			style = styles.FocusedDestructiveButton
+			label = "›" + label + "‹"
 		}
 	}
-	return lipgloss.NewStyle().
-		Foreground(foreground).
-		Background(background).
-		Bold(true).
-		Underline(underline).
-		Padding(0, padding).
-		Render(label)
+	return style.Render(label)
 }
 
-func dialogWithActions(content string, actions []dialogAction, focus dialogFocus) (string, []mouseHit) {
+func dialogWithActions(content string, actions []dialogAction, focus dialogFocus, styles Styles) (string, []mouseHit) {
 	var row strings.Builder
 	hits := make([]mouseHit, 0, len(actions))
 	x := 0
 	y := lipgloss.Height(content) + 1
 	for i, action := range actions {
-		button := renderButton(action, focus == action.focus)
+		button := renderButton(action, focus == action.focus, styles)
 		width := lipgloss.Width(button)
 		switch {
 		case action.focus == dialogFocusDelete:
@@ -583,10 +610,7 @@ func dialogBodyWidth(width int) int {
 func (m *model) centerDialog(content string, hits []mouseHit) string {
 	width, height := max(1, m.width), m.mainHeight()
 	outerWidth := dialogOuterWidth(m.width)
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("39")).
-		Padding(1, 2).
+	box := m.styles.Dialog.
 		Width(dialogStyleWidth(m.width)).
 		MaxWidth(outerWidth).
 		Render(content)
@@ -599,15 +623,15 @@ func (m *model) centerDialog(content string, hits []mouseHit) string {
 func (m *model) bookView() string {
 	var b strings.Builder
 	hits := make([]mouseHit, 0, len(m.books)+2)
-	b.WriteString(accent.Render("Select target addressbook") + "\n\n")
+	b.WriteString(m.styles.Accent.Render("Select target addressbook") + "\n\n")
 	for i, book := range m.books {
 		prefix := "  "
 		if i == m.bookCursor && m.dialogFocus == dialogFocusControl {
 			prefix = "› "
 		}
-		line := prefix + book.Name() + "  " + dim.Render(book.Path)
+		line := prefix + book.Name() + "  " + m.styles.Dim.Render(book.Path)
 		if i == m.bookCursor && m.dialogFocus == dialogFocusControl {
-			line = selectedStyle.Render(line)
+			line = m.styles.Selected.Render(line)
 		}
 		hits = append(hits, mouseHit{rect: mouseRect{x: 0, y: 2 + i, width: max(1, ansi.StringWidth(line)), height: 1}, kind: mouseBook, index: i})
 		b.WriteString(line + "\n")
@@ -615,17 +639,17 @@ func (m *model) bookView() string {
 	content, actionHits := dialogWithActions(strings.TrimSuffix(b.String(), "\n"), []dialogAction{
 		{label: "Apply", focus: dialogFocusPrimary},
 		{label: "Cancel", focus: dialogFocusCancel},
-	}, m.dialogFocus)
+	}, m.dialogFocus, m.styles)
 	return m.centerDialog(content, append(hits, actionHits...))
 }
 
 func (m *model) confirmView() string {
 	destructive := m.op == opDelete || m.op == opMerge
-	content := lipgloss.JoinVertical(lipgloss.Left, accent.Render("Confirm"), "", m.confirmText())
+	content := lipgloss.JoinVertical(lipgloss.Left, m.styles.Accent.Render("Confirm"), "", m.confirmText())
 	content, hits := dialogWithActions(content, []dialogAction{
 		{label: "Confirm", focus: dialogFocusPrimary, destructive: destructive},
 		{label: "Cancel", focus: dialogFocusCancel},
-	}, m.dialogFocus)
+	}, m.dialogFocus, m.styles)
 	return m.centerDialog(content, hits)
 }
 
@@ -633,13 +657,13 @@ func (m *model) conflictView() string {
 	if m.conflictForm == nil {
 		return ""
 	}
-	progress := dim.Render(fmt.Sprintf("Conflict %d of %d", m.conflictCursor+1, len(m.conflicts)))
+	progress := m.styles.Dim.Render(fmt.Sprintf("Conflict %d of %d", m.conflictCursor+1, len(m.conflicts)))
 	form := editorPopupView(m.conflictForm, dialogBodyWidth(m.width))
-	content := lipgloss.JoinVertical(lipgloss.Left, accent.Render("Resolve merge conflicts"), progress, "", form)
+	content := lipgloss.JoinVertical(lipgloss.Left, m.styles.Accent.Render("Resolve merge conflicts"), progress, "", form)
 	content, hits := dialogWithActions(content, []dialogAction{
 		{label: "Apply", focus: dialogFocusPrimary},
 		{label: "Cancel", focus: dialogFocusCancel},
-	}, m.dialogFocus)
+	}, m.dialogFocus, m.styles)
 	return m.centerDialog(content, hits)
 }
 
@@ -654,28 +678,28 @@ func (m *model) renderEditorRow(row editorRow, selected bool, width int) string 
 	}
 	if row.add {
 		action := dialogAction{label: row.label, focus: dialogFocusPrimary}
-		line := prefix + renderButton(action, selected)
+		line := prefix + renderButton(action, selected, m.styles)
 		return lipgloss.NewStyle().Width(width).Render(line)
 	}
-	label := fieldNameStyle.Width(20).Render(row.label)
+	label := m.styles.FieldName.Width(20).Render(row.label)
 	valueWidth := max(1, width-27)
 	valueLines := strings.Split(row.value, "\n")
-	line := fmt.Sprintf("%s%s: %s", prefix, label, fieldValueStyle.Render(clip(valueLines[0], valueWidth)))
+	line := fmt.Sprintf("%s%s: %s", prefix, label, m.styles.FieldValue.Render(clip(valueLines[0], valueWidth)))
 	if len(valueLines) > 1 {
 		indent := strings.Repeat(" ", lipgloss.Width(prefix)+22)
 		for _, valueLine := range valueLines[1:] {
-			line += "\n" + indent + fieldValueStyle.Render(clip(valueLine, valueWidth))
+			line += "\n" + indent + m.styles.FieldValue.Render(clip(valueLine, valueWidth))
 		}
 	}
 	if selected {
-		line = selectedStyle.Render(line)
+		line = m.styles.Selected.Render(line)
 	}
 	return line
 }
 
-func renderFormActions(saveSelected, cancelSelected bool) (string, int, int, int) {
-	save := renderButton(dialogAction{label: "Save", focus: dialogFocusPrimary}, saveSelected)
-	cancel := renderButton(dialogAction{label: "Cancel", focus: dialogFocusCancel}, cancelSelected)
+func renderFormActions(saveSelected, cancelSelected bool, styles Styles) (string, int, int, int) {
+	save := renderButton(dialogAction{label: "Save", focus: dialogFocusPrimary}, saveSelected, styles)
+	cancel := renderButton(dialogAction{label: "Cancel", focus: dialogFocusCancel}, cancelSelected, styles)
 	saveWidth := lipgloss.Width(save)
 	cancelX := saveWidth + 2
 	return save + "  " + cancel, saveWidth, cancelX, lipgloss.Width(cancel)
@@ -689,9 +713,9 @@ func (m *model) formBaseView() string {
 	if len(m.form.merged) > 0 {
 		title = "Review merged contact"
 	}
-	header := []string{accent.Render(" " + title + " ")}
+	header := []string{m.styles.Accent.Render(" " + title + " ")}
 	if m.form.errMsg != "" {
-		header = append(header, errorStyle.Render(" "+m.form.errMsg))
+		header = append(header, m.styles.Error.Render(" "+m.form.errMsg))
 	}
 	bodyHeight := max(1, m.mainHeight()-len(header))
 	rows := m.editorRows()
@@ -707,7 +731,7 @@ func (m *model) formBaseView() string {
 			}
 			label := " " + row.label + " "
 			ruleWidth := max(0, m.width-lipgloss.Width(label)-2)
-			line := lipgloss.NewStyle().Width(max(10, m.width)).Foreground(lipgloss.Color("244")).Bold(true).Render(label + strings.Repeat("─", ruleWidth))
+			line := m.styles.Section.Width(max(10, m.width)).Render(label + strings.Repeat("─", ruleWidth))
 			lines = append(lines, line)
 			lineHits = append(lineHits, nil)
 			continue
@@ -716,7 +740,7 @@ func (m *model) formBaseView() string {
 			if i == m.form.cursor || i+1 == m.form.cursor {
 				selectedLine = len(lines)
 			}
-			line, saveWidth, cancelX, cancelWidth := renderFormActions(i == m.form.cursor, i+1 == m.form.cursor)
+			line, saveWidth, cancelX, cancelWidth := renderFormActions(i == m.form.cursor, i+1 == m.form.cursor, m.styles)
 			lines = append(lines, line)
 			lineHits = append(lineHits, []editorLineHit{{row: i, width: saveWidth}, {row: i + 1, x: cancelX, width: cancelWidth}})
 			i++
@@ -759,11 +783,11 @@ func (m *model) formView() string {
 	var content string
 	var hits []mouseHit
 	if m.form.datePicker != nil {
-		picker, pickerHits := m.form.datePicker.render()
+		picker, pickerHits := m.form.datePicker.render(m.styles)
 		for i := range pickerHits {
 			pickerHits[i].rect.y += 2
 		}
-		content = lipgloss.JoinVertical(lipgloss.Left, accent.Render(m.form.activeRow.label), "", picker)
+		content = lipgloss.JoinVertical(lipgloss.Left, m.styles.Accent.Render(m.form.activeRow.label), "", picker)
 		content = lipgloss.NewStyle().Width(popupWidth).MaxWidth(popupWidth).Render(content)
 		hits = pickerHits
 	} else {
@@ -776,11 +800,11 @@ func (m *model) formView() string {
 	if m.editorDialogHasDelete() {
 		actions = append(actions, dialogAction{label: "Delete", focus: dialogFocusDelete, destructive: true})
 	}
-	content, actionHits := dialogWithActions(content, actions, m.form.dialogFocus)
+	content, actionHits := dialogWithActions(content, actions, m.form.dialogFocus, m.styles)
 	return m.overlayDialog(base, content, append(hits, actionHits...))
 }
 
-func subduedSurface(base string, width, height int) []string {
+func (m *model) subduedSurface(base string, width, height int) []string {
 	source := strings.Split(base, "\n")
 	lines := make([]string, height)
 	for y := range lines {
@@ -790,7 +814,7 @@ func subduedSurface(base string, width, height int) []string {
 		}
 		line = ansi.Cut(line, 0, width)
 		line += strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))
-		lines[y] = dim.Render(line)
+		lines[y] = m.styles.Dim.Render(line)
 	}
 	return lines
 }
@@ -798,10 +822,7 @@ func subduedSurface(base string, width, height int) []string {
 func (m *model) overlayDialog(base, content string, hits []mouseHit) string {
 	width, height := max(1, m.width), m.mainHeight()
 	outerWidth := dialogOuterWidth(m.width)
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("39")).
-		Padding(1, 2).
+	box := m.styles.Dialog.
 		Width(dialogStyleWidth(m.width)).
 		MaxWidth(outerWidth).
 		Render(content)
@@ -809,7 +830,7 @@ func (m *model) overlayDialog(base, content string, hits []mouseHit) string {
 	boxWidth := lipgloss.Width(box)
 	x := max(0, (width-boxWidth)/2)
 	y := max(0, (height-len(boxLines))/2)
-	lines := subduedSurface(base, width, height)
+	lines := m.subduedSurface(base, width, height)
 	for i, boxLine := range boxLines {
 		if y+i >= len(lines) {
 			break
@@ -942,15 +963,12 @@ func (m *model) helpLines() []string {
 func (m *model) renderHelpOverlay(height int) string {
 	width := dialogBodyWidth(m.width)
 	content := lipgloss.JoinVertical(lipgloss.Left,
-		accent.Render("Shortcuts"),
+		m.styles.Accent.Render("Shortcuts"),
 		"",
 		lipgloss.NewStyle().Width(width).MaxWidth(width).Render(strings.Join(m.helpLines(), "\n")),
 	)
 	outerWidth := dialogOuterWidth(m.width)
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("245")).
-		Padding(1, 2).
+	box := m.styles.HelpDialog.
 		Width(dialogStyleWidth(m.width)).
 		MaxWidth(outerWidth).
 		Render(content)

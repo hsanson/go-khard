@@ -519,7 +519,7 @@ func (m *model) openConflictForm() tea.Cmd {
 		options = append(options, huh.NewOption(value, value))
 	}
 	m.dialogFocus = dialogFocusControl
-	m.conflictForm = popup(huh.NewSelect[string]().
+	m.conflictForm = popup(m.formTheme, huh.NewSelect[string]().
 		Title(conflictLabel(key)).
 		Description("Select the value to keep").
 		Options(options...).

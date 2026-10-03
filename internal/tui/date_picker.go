@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 type contactDatePicker struct {
@@ -120,11 +119,11 @@ func (p *contactDatePicker) update(msg tea.KeyMsg) {
 	}
 }
 
-func (p *contactDatePicker) render() (string, []mouseHit) {
+func (p *contactDatePicker) render(styles Styles) (string, []mouseHit) {
 	header := fmt.Sprintf("%-18s ‹ ›", p.month.Format("January 2006"))
 	lines := []string{
-		accent.Render(header),
-		dim.Render("Mo Tu We Th Fr Sa Su"),
+		styles.Accent.Render(header),
+		styles.Dim.Render("Mo Tu We Th Fr Sa Su"),
 	}
 	hits := []mouseHit{
 		{rect: mouseRect{x: 19, y: 0, width: 1, height: 1}, kind: mouseDatePreviousMonth},
@@ -143,7 +142,7 @@ func (p *contactDatePicker) render() (string, []mouseHit) {
 			date := time.Date(p.month.Year(), p.month.Month(), day, 0, 0, 0, 0, time.UTC)
 			cell := fmt.Sprintf("%2d", day)
 			if sameDate(date, p.cursor) {
-				cell = lipgloss.NewStyle().Background(lipgloss.Color("117")).Foreground(lipgloss.Color("232")).Bold(true).Render(cell)
+				cell = styles.DateSelected.Render(cell)
 			}
 			hits = append(hits, mouseHit{
 				rect: mouseRect{x: weekday * 3, y: len(lines), width: 2, height: 1},

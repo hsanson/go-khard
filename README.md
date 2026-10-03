@@ -65,6 +65,16 @@ go-khard
 The default configuration is `~/.config/go-khal/config.json`. Only sources with
 `"type": "addressbook"` are loaded. Use `--config PATH` to select another file.
 
+### Omarchy themes
+
+On Linux, the `go-khard` and `go-khard add-email` TUIs automatically use the
+active Omarchy palette from
+`~/.local/state/omarchy/current/theme/colors.toml`. Theme changes are applied
+while the TUI is running. Application surfaces keep the terminal's default
+background. A missing or invalid startup palette uses the built-in styles; an
+invalid runtime update keeps the last valid palette until it is repaired. Other
+platforms always use the built-in styles.
+
 The main view displays each contact's name, address book, preferred email, and
 preferred phone. Press `/` to search names, email addresses, and phone numbers
 with fuzzy matching. While searching, use `ctrl-j`/`ctrl-k` or the arrow keys to

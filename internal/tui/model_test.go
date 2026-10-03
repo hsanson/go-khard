@@ -236,7 +236,7 @@ func TestMergeSelectionErrorIsRed(t *testing.T) {
 	if !m.messageErr {
 		t.Fatal("merge selection failure was not marked as an error")
 	}
-	if want := errorStyle.Render("select at least two contacts to merge"); !strings.Contains(m.View(), want) {
+	if want := DefaultStyles().Error.Render("select at least two contacts to merge"); !strings.Contains(m.View(), want) {
 		t.Fatalf("merge selection error is not rendered with error style:\n%s", m.View())
 	}
 }

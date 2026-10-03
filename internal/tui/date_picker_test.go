@@ -29,7 +29,7 @@ func TestContactDatePickerPreservesOptionalAndLegacyValues(t *testing.T) {
 	if got := yearless.value(); got != "--01-19" {
 		t.Fatalf("untouched yearless value = %q", got)
 	}
-	view, _ := yearless.render()
+	view, _ := yearless.render(DefaultStyles())
 	if !strings.Contains(view, "Jan 19 (year unspecified)") {
 		t.Fatalf("yearless status missing:\n%s", view)
 	}
@@ -39,7 +39,7 @@ func TestContactDatePickerPreservesOptionalAndLegacyValues(t *testing.T) {
 	}
 
 	unknown := newContactDatePicker("text=unknown", now)
-	view, _ = unknown.render()
+	view, _ = unknown.render(DefaultStyles())
 	if unknown.value() != "text=unknown" || !strings.Contains(view, "Existing: text=unknown") {
 		t.Fatalf("unsupported value was not preserved:\n%s", view)
 	}

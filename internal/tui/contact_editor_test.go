@@ -158,7 +158,7 @@ func TestMergeConflictsAreResolvedSequentiallyBeforeReview(t *testing.T) {
 
 func TestActivePopupRoutesNavigationMessagesAndEscape(t *testing.T) {
 	first, second := "", ""
-	form := popup(huh.NewInput().Title("First").Value(&first), huh.NewInput().Title("Second").Value(&second))
+	form := popup(nil, huh.NewInput().Title("First").Value(&first), huh.NewInput().Title("Second").Value(&second))
 	m := &model{mode: modeForm, form: formState{card: make(vcard.Card), activeForm: form}}
 	before := form.GetFocusedField()
 	_, _ = m.Update(huh.NextField())
@@ -207,7 +207,7 @@ func TestNoteContinuationLinesAreIndented(t *testing.T) {
 	m := &model{width: 80, height: 200, mode: modeForm, form: formState{card: card}}
 	view := m.formView()
 	indent := strings.Repeat(" ", 24)
-	if !strings.Contains(view, "\n"+indent+fieldValueStyle.Render("second line")) {
+	if !strings.Contains(view, "\n"+indent+m.styles.FieldValue.Render("second line")) {
 		t.Fatalf("note continuation is not aligned with value column:\n%s", view)
 	}
 }
@@ -288,7 +288,7 @@ func TestFormattedNameFromComponents(t *testing.T) {
 
 func TestEditorDialogTraversesFieldsAndActions(t *testing.T) {
 	first, second := "", ""
-	form := popup(
+	form := popup(nil,
 		huh.NewInput().Title("First").Value(&first),
 		huh.NewInput().Title("Second").Value(&second),
 	)
@@ -435,7 +435,7 @@ func TestFieldDialogOverlaysContactForm(t *testing.T) {
 }
 
 func TestDialogsUseSixtyPercentOfTerminalWidth(t *testing.T) {
-	m := &model{width: 100, height: 40}
+	m := &model{width: 100, height: 40, styles: DefaultStyles()}
 	want := 60
 	dialogs := []struct {
 		name string
@@ -467,7 +467,7 @@ func TestDeleteActionReservesAnEmptyButtonSlot(t *testing.T) {
 		{label: "Apply", focus: dialogFocusPrimary},
 		{label: "Cancel", focus: dialogFocusCancel},
 		{label: "Delete", focus: dialogFocusDelete, destructive: true},
-	}, dialogFocusControl)
+	}, dialogFocusControl, DefaultStyles())
 	cancel, remove := hits[1].rect, hits[2].rect
 	if gap := remove.x - (cancel.x + cancel.width); gap < remove.width+4 {
 		t.Fatalf("Cancel/Delete gap = %d, want room for another button", gap)

@@ -372,7 +372,7 @@ func (m *model) buildEditorPopup(row editorRow) *huh.Form {
 		for i, book := range m.books {
 			options = append(options, huh.NewOption(book.Name(), i))
 		}
-		return popup(huh.NewSelect[int]().Title("Addressbook").Options(options...).Value(&m.form.book))
+		return popup(m.formTheme, huh.NewSelect[int]().Title("Addressbook").Options(options...).Value(&m.form.book))
 	}
 	if row.key == "private-add" || strings.HasPrefix(row.key, "X-") {
 		name, value := strings.TrimPrefix(row.key, "X-"), ""
@@ -380,23 +380,23 @@ func (m *model) buildEditorPopup(row editorRow) *huh.Form {
 			value = card[row.key][row.index].Value
 		}
 		m.form.tmp = []string{name, value}
-		return popup(
+		return popup(m.formTheme,
 			huh.NewInput().Title("Property name").Value(&m.form.tmp[0]).Validate(privateName),
 			huh.NewInput().Title("Value").Value(&m.form.tmp[1]),
 		)
 	}
 	if isNameKey(row.key) {
 		m.form.tmp = []string{scalarValue(card, row.key)}
-		return popup(huh.NewInput().Title(row.label).Value(&m.form.tmp[0]))
+		return popup(m.formTheme, huh.NewInput().Title(row.label).Value(&m.form.tmp[0]))
 	}
 	switch row.key {
 	case vcard.FieldFormattedName:
 		m.form.tmp = []string{card.Value(row.key)}
-		return popup(huh.NewInput().Title(row.label).Value(&m.form.tmp[0]))
+		return popup(m.formTheme, huh.NewInput().Title(row.label).Value(&m.form.tmp[0]))
 	case vcard.FieldKind:
 		value := card.Value(row.key)
 		m.form.tmp = []string{value}
-		return popup(huh.NewSelect[string]().Title("Kind").Options(
+		return popup(m.formTheme, huh.NewSelect[string]().Title("Kind").Options(
 			huh.NewOption("Unspecified", ""), huh.NewOption("Individual", "individual"),
 			huh.NewOption("Group", "group"), huh.NewOption("Organisation", "org"),
 			huh.NewOption("Location", "location"), huh.NewOption("Application", "application"),
@@ -414,17 +414,17 @@ func (m *model) buildEditorPopup(row editorRow) *huh.Form {
 			parts = splitComponents(card[row.key][row.index].Value, 2)
 		}
 		m.form.tmp = parts
-		return popup(huh.NewInput().Title("Company").Value(&m.form.tmp[0]), huh.NewInput().Title("Unit").Value(&m.form.tmp[1]))
+		return popup(m.formTheme, huh.NewInput().Title("Company").Value(&m.form.tmp[0]), huh.NewInput().Title("Unit").Value(&m.form.tmp[1]))
 	case vcard.FieldNote:
 		m.form.tmp = []string{card.Value(row.key)}
-		return popup(huh.NewText().Title("Note").Lines(10).Value(&m.form.tmp[0]))
+		return popup(m.formTheme, huh.NewText().Title("Note").Lines(10).Value(&m.form.tmp[0]))
 	default:
 		value := ""
 		if !row.add {
 			value = card[row.key][row.index].Value
 		}
 		m.form.tmp = []string{value}
-		return popup(huh.NewInput().Title(strings.TrimPrefix(row.label, "󰐕 Add ")).Value(&m.form.tmp[0]))
+		return popup(m.formTheme, huh.NewInput().Title(strings.TrimPrefix(row.label, "󰐕 Add ")).Value(&m.form.tmp[0]))
 	}
 }
 
@@ -456,7 +456,7 @@ func (m *model) typedPopup(row editorRow) *huh.Form {
 	if row.key == vcard.FieldEmail {
 		valueInput.Validate(validEmail)
 	}
-	return popup(
+	return popup(m.formTheme,
 		huh.NewMultiSelect[string]().Title("Types").Options(options...).Value(&m.form.tmpTypes),
 		valueInput,
 	)
@@ -478,7 +478,7 @@ func (m *model) addressPopup(row editorRow) *huh.Form {
 	for _, value := range allowed {
 		options = append(options, huh.NewOption(value, value))
 	}
-	return popup(
+	return popup(m.formTheme,
 		huh.NewSelect[string]().Title("Type").Options(options...).Value(&m.form.tmp[0]),
 		huh.NewInput().Title("Box").Value(&m.form.tmp[1]),
 		huh.NewInput().Title("Extended").Value(&m.form.tmp[2]),
@@ -599,8 +599,9 @@ func NewPreferredMultiFieldFormKeyMap() *huh.KeyMap {
 	return NewPreferredFormKeyMap()
 }
 
-func popup(fields ...huh.Field) *huh.Form {
+func popup(theme *huh.Theme, fields ...huh.Field) *huh.Form {
 	return huh.NewForm(huh.NewGroup(fields...)).
+		WithTheme(theme).
 		WithKeyMap(NewPreferredMultiFieldFormKeyMap()).
 		WithShowHelp(false).
 		WithShowErrors(true)
