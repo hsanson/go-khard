@@ -58,12 +58,18 @@ Ensure the Go binary directory, usually `~/go/bin`, is in your `PATH`.
 ## Quick start
 
 ```sh
-go-khard config from-vdirsyncer
+go-khal config from-vdirsyncer
 go-khard
 ```
 
-The default configuration is `~/.config/go-khal/config.json`. Only sources with
-`"type": "addressbook"` are loaded. Use `--config PATH` to select another file.
+`go-khard` reads `${XDG_CONFIG_HOME:-$HOME/.config}/khal/config`. Khal calendar
+sections with `type = birthdays` are editable addressbooks; other calendar
+types are ignored. Use `--config PATH` to read a specific khal or JSON file.
+go-khard never modifies configuration.
+
+If the khal config is absent, go-khard falls back to the deprecated
+`~/.config/go-khal/config.json`. JSON configuration support will be removed in
+a future release.
 
 ### Omarchy themes
 
@@ -128,16 +134,13 @@ Mouse input supports wheel navigation, address-book cycling, contact and field
 opening, and every visible button. Ctrl-click selects or unselects a contact.
 
 Phone and email entries allow multiple types, while address entries use a
-single type. Extra type labels can be added to the shared configuration:
+single type. Extra type labels can be added to the shared khal configuration:
 
-```json
-{
-  "contact_types": {
-    "phone": ["satellite"],
-    "email": ["school"],
-    "address": ["vacation"]
-  }
-}
+```ini
+[go-khard]
+phone_types = satellite
+email_types = school
+address_types = vacation
 ```
 
 These values extend, rather than replace, the built-in type choices.

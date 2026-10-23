@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,55 +38,92 @@ type ContactTypes struct {
 }
 
 func DefaultPath() string {
-	h, err := os.UserHomeDir()
+	configHome := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if configHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return filepath.Join("khal", "config")
+		}
+		configHome = filepath.Join(home, ".config")
+	}
+	return filepath.Join(configHome, "khal", "config")
+}
+
+func LegacyJSONPath() string {
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".go-khal.json"
 	}
-	return filepath.Join(h, ".config", "go-khal", "config.json")
+	return filepath.Join(home, ".config", "go-khal", "config.json")
 }
 
 func Default() *Config {
 	return &Config{DefaultView: "agenda", WeekStartsOn: "monday", TimeFormat: "15:04", SidebarWidth: 30, RecurrenceLookbackMonths: 12, RecurrenceLookaheadMonths: 24}
 }
 
-func Load(path string) (*Config, error) {
-	b, err := os.ReadFile(path)
+func LoadDefault() (*Config, error) {
+	primary := DefaultPath()
+	cfg, err := Load(primary)
+	if err == nil {
+		return cfg, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	legacy := LegacyJSONPath()
+	cfg, err = Load(legacy)
+	if err == nil {
+		return cfg, nil
+	}
 	if errors.Is(err, os.ErrNotExist) {
-		return Default(), nil
+		return nil, fmt.Errorf("no configuration found at %s or deprecated %s: %w", primary, legacy, os.ErrNotExist)
+	}
+	return nil, fmt.Errorf("load deprecated config %s: %w", legacy, err)
+}
+
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+
+	var cfg *Config
+	if strings.EqualFold(filepath.Ext(path), ".json") || bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) {
+		cfg, err = loadJSON(data)
+	} else {
+		cfg, err = loadKhalConfig(data)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-	cfg := Default()
-	if err := json.Unmarshal(b, cfg); err != nil {
-		return nil, fmt.Errorf("parse config: %w", err)
-	}
-	for i := range cfg.Sources {
-		s := &cfg.Sources[i]
-		s.Path = filepath.Clean(strings.TrimSpace(s.Path))
-		s.Type = strings.ToLower(strings.TrimSpace(s.Type))
-		if !filepath.IsAbs(s.Path) {
-			return nil, fmt.Errorf("source %d path must be absolute: %s", i+1, s.Path)
-		}
-		if s.Type != "calendar" && s.Type != "addressbook" {
-			return nil, fmt.Errorf("source %d type must be calendar or addressbook", i+1)
-		}
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return cfg, nil
 }
 
-func Save(path string, cfg *Config) error {
-	if cfg == nil {
-		return errors.New("nil config")
+func loadJSON(data []byte) (*Config, error) {
+	cfg := Default()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	if err := normalize(cfg); err != nil {
+		return nil, err
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
+	return cfg, nil
+}
+
+func normalize(cfg *Config) error {
+	for i := range cfg.Sources {
+		source := &cfg.Sources[i]
+		source.Path = filepath.Clean(strings.TrimSpace(source.Path))
+		source.Type = strings.ToLower(strings.TrimSpace(source.Type))
+		if !filepath.IsAbs(source.Path) {
+			return fmt.Errorf("source %d path must be absolute: %s", i+1, source.Path)
+		}
+		if source.Type != "calendar" && source.Type != "addressbook" {
+			return fmt.Errorf("source %d type must be calendar or addressbook", i+1)
+		}
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return nil
 }
 
 func (s Source) Name() string {

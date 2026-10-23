@@ -23,7 +23,7 @@ var rootCmd = &cobra.Command{
 	Short: "Interactive vCard address book",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(cfgPath)
+		cfg, err := loadConfig(cmd)
 		if err != nil {
 			return err
 		}
@@ -41,6 +41,13 @@ func init() {
 	rootCmd.AddCommand(newQueryCommand())
 	rootCmd.AddCommand(newAddEmailCommand())
 }
+func loadConfig(cmd *cobra.Command) (*config.Config, error) {
+	flag := cmd.Flags().Lookup("config")
+	if flag != nil && flag.Changed {
+		return config.Load(cfgPath)
+	}
+	return config.LoadDefault()
+}
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
@@ -54,7 +61,7 @@ func newQueryCommand() *cobra.Command {
 		Use: "query <text>", Short: "neomutt query_command compatible contact query",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(cfgPath)
+			cfg, err := loadConfig(cmd)
 			if err != nil {
 				return err
 			}
@@ -73,7 +80,7 @@ func newAddEmailCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := config.Load(cfgPath)
+			cfg, err := loadConfig(cmd)
 			if err != nil {
 				return err
 			}
