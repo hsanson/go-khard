@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -31,5 +33,22 @@ func TestSenderFromMessageDecodesISO2022JPName(t *testing.T) {
 	}
 	if sender.Name != "山田太郎" || sender.Address != "taro@example.jp" {
 		t.Fatalf("sender = %#v", sender)
+	}
+}
+
+func TestVersionCommand(t *testing.T) {
+	oldVersion := version
+	version = "v1.2.3"
+	t.Cleanup(func() { version = oldVersion })
+
+	command := newVersionCommand()
+	var stdout bytes.Buffer
+	command.SetOut(&stdout)
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	want := "go-khard v1.2.3 (" + runtime.Version() + ")\n"
+	if stdout.String() != want {
+		t.Fatalf("version output = %q, want %q", stdout.String(), want)
 	}
 }

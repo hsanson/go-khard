@@ -6,6 +6,7 @@ import (
 	"mime"
 	"net/mail"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/hsanson/go-khard/internal/config"
@@ -16,7 +17,10 @@ import (
 	"golang.org/x/text/transform"
 )
 
-var cfgPath string
+var (
+	cfgPath string
+	version = "devel"
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "go-khard [query]",
@@ -37,6 +41,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgPath, "config", config.DefaultPath(), "shared go-khal/go-khard config file")
+	rootCmd.AddCommand(newVersionCommand())
 	rootCmd.AddCommand(newConfigCommand())
 	rootCmd.AddCommand(newQueryCommand())
 	rootCmd.AddCommand(newAddEmailCommand())
@@ -53,6 +58,17 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+func newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Fprintf(cmd.OutOrStdout(), "go-khard %s (%s)\n", version, runtime.Version())
+		},
 	}
 }
 

@@ -55,6 +55,12 @@ make install
 
 Ensure the Go binary directory, usually `~/go/bin`, is in your `PATH`.
 
+Print the application and build toolchain versions:
+
+```sh
+go-khard version
+```
+
 ## Quick start
 
 ```sh
