@@ -23,21 +23,22 @@ Download the archive for your platform from the
 [GitHub releases page](https://github.com/hsanson/go-khard/releases).
 
 Release artifacts are named by version, operating system, and architecture. For
-example: `go-khard_v0.0.1_linux_amd64.tar.gz`,
-`go-khard_v0.0.1_darwin_arm64.tar.gz`, and
-`go-khard_v0.0.1_windows_amd64.zip`.
+example: `go-khard_v0.3.0_linux_amd64.tar.gz`,
+`go-khard_v0.3.0_darwin_arm64.tar.gz`, and
+`go-khard_v0.3.0_windows_amd64.zip`.
 
 Linux x86-64 example:
 
 ```sh
-curl -LO https://github.com/hsanson/go-khard/releases/download/v0.0.1/go-khard_v0.0.1_linux_amd64.tar.gz
-curl -LO https://github.com/hsanson/go-khard/releases/download/v0.0.1/SHA256SUMS
+export VERSION=0.3.0
+curl -LO https://github.com/hsanson/go-khard/releases/download/v${VERSION}/go-khard_v${VERSION}_linux_amd64.tar.gz
+curl -LO https://github.com/hsanson/go-khard/releases/download/v${VERSION}/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing
-tar -xzf go-khard_v0.0.1_linux_amd64.tar.gz
+tar -xzf go-khard_v${VERSION}_linux_amd64.tar.gz
 install -m 0755 go-khard ~/.local/bin/go-khard
 ```
 
-Replace `v0.0.1` with the release you want to install.
+Replace `VERSION` with the release you want to install.
 
 ### Install From Source
 
