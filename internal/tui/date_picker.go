@@ -100,8 +100,6 @@ func (p *contactDatePicker) moveMonth(months int) {
 
 func (p *contactDatePicker) update(msg tea.KeyMsg) {
 	switch msg.String() {
-	case "space", " ":
-		p.clear()
 	case "[", "pgup", "ctrl+k":
 		p.moveMonth(-1)
 	case "]", "pgdown", "ctrl+j":
@@ -118,8 +116,6 @@ func (p *contactDatePicker) update(msg tea.KeyMsg) {
 		p.moveDays(-7)
 	case "down", "j":
 		p.moveDays(7)
-	case "t":
-		p.selectDate(time.Now())
 	}
 }
 
@@ -127,7 +123,7 @@ func (p *contactDatePicker) render(styles Styles) (string, []mouseHit) {
 	header := fmt.Sprintf("%-18s « ‹ › »", p.month.Format("January 2006"))
 	lines := []string{
 		styles.Accent.Render(header),
-		styles.Dim.Render("Mo Tu We Th Fr Sa Su"),
+		styles.Subtle.Render("Mo Tu We Th Fr Sa Su"),
 	}
 	hits := []mouseHit{
 		{rect: mouseRect{x: 19, y: 0, width: 1, height: 1}, kind: mouseDatePreviousYear},
@@ -148,7 +144,7 @@ func (p *contactDatePicker) render(styles Styles) (string, []mouseHit) {
 			date := time.Date(p.month.Year(), p.month.Month(), day, 0, 0, 0, 0, time.UTC)
 			cell := fmt.Sprintf("%2d", day)
 			if sameDate(date, p.cursor) {
-				cell = styles.DateSelected.Render(cell)
+				cell = styles.Focus.Render(cell)
 			}
 			hits = append(hits, mouseHit{
 				rect: mouseRect{x: weekday * 3, y: len(lines), width: 2, height: 1},
@@ -159,14 +155,6 @@ func (p *contactDatePicker) render(styles Styles) (string, []mouseHit) {
 		}
 		lines = append(lines, strings.Join(cells, " "))
 	}
-	lines = append(lines, "")
-	controlsY := len(lines)
-	today, clear := "[ Today ]", "[ Clear ]"
-	lines = append(lines, today+"  "+clear)
-	hits = append(hits,
-		mouseHit{rect: mouseRect{x: 0, y: controlsY, width: len(today), height: 1}, kind: mouseDateToday},
-		mouseHit{rect: mouseRect{x: len(today) + 2, y: controlsY, width: len(clear), height: 1}, kind: mouseDateClear},
-	)
 	status := "Date: —"
 	switch {
 	case p.cleared:
@@ -189,19 +177,25 @@ func (m *model) updateActiveDatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancelEditorDialog()
 		return m, nil
 	case "tab":
-		cycleDialogAction(&m.form.dialogFocus, 1, false)
+		cycleDialogAction(&m.form.dialogFocus, 1, true)
 		return m, nil
 	case "shift+tab":
-		cycleDialogAction(&m.form.dialogFocus, -1, false)
+		cycleDialogAction(&m.form.dialogFocus, -1, true)
 		return m, nil
 	case "left", "h":
 		if m.form.dialogFocus != dialogFocusControl {
-			selectDialogAction(&m.form.dialogFocus, dialogFocusPrimary)
+			cycleDialogAction(&m.form.dialogFocus, -1, true)
+			if m.form.dialogFocus == dialogFocusControl {
+				m.form.dialogFocus = dialogFocusDelete
+			}
 			return m, nil
 		}
 	case "right", "l":
 		if m.form.dialogFocus != dialogFocusControl {
-			selectDialogAction(&m.form.dialogFocus, dialogFocusCancel)
+			cycleDialogAction(&m.form.dialogFocus, 1, true)
+			if m.form.dialogFocus == dialogFocusControl {
+				m.form.dialogFocus = dialogFocusPrimary
+			}
 			return m, nil
 		}
 	case "enter":

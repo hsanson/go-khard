@@ -52,6 +52,56 @@ func TestApplyThemeUpdatesSharedFormTheme(t *testing.T) {
 	}
 }
 
+func TestWorkspaceStylesMatchGoKhalStates(t *testing.T) {
+	palette, err := parseOmarchyPalette([]byte(testOmarchyPalette("#123456")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	theme := stylesFromOmarchyPalette(palette)
+	buttons := []struct {
+		name                   string
+		style                  lipgloss.Style
+		foreground, background string
+	}{
+		{"themed primary", theme.styles.PrimaryButton, "#d6e2ee", "#1b2d40"},
+		{"themed secondary", theme.styles.SecondaryButton, "#d6e2ee", "#1b2d40"},
+		{"themed focused", theme.styles.FocusedButton, "#0b1216", "#6fb8e3"},
+		{"themed danger", theme.styles.DangerButton, "#73a6cb", "#1b2d40"},
+		{"themed focused danger", theme.styles.FocusedDanger, "#0b1216", "#73a6cb"},
+		{"fallback primary", DefaultStyles().PrimaryButton, "230", "238"},
+		{"fallback secondary", DefaultStyles().SecondaryButton, "230", "238"},
+		{"fallback focused", DefaultStyles().FocusedButton, "230", "117"},
+		{"fallback danger", DefaultStyles().DangerButton, "196", "238"},
+		{"fallback focused danger", DefaultStyles().FocusedDanger, "233", "196"},
+	}
+	for _, button := range buttons {
+		t.Run(button.name, func(t *testing.T) {
+			if got := styleForeground(button.style); got != button.foreground {
+				t.Errorf("foreground = %q, want %q", got, button.foreground)
+			}
+			if got := styleBackground(button.style); got != button.background {
+				t.Errorf("background = %q, want %q", got, button.background)
+			}
+		})
+	}
+	for _, panel := range []struct {
+		name  string
+		style lipgloss.Style
+		want  string
+	}{
+		{"themed inactive", theme.styles.MainPanel, "#304860"},
+		{"themed focused", theme.styles.FocusedPanel, "#f2fcff"},
+		{"fallback inactive", DefaultStyles().MainPanel, "240"},
+		{"fallback focused", DefaultStyles().FocusedPanel, "117"},
+	} {
+		t.Run(panel.name, func(t *testing.T) {
+			if got := styleBorderForeground(panel.style); got != panel.want {
+				t.Fatalf("border color = %q, want %q", got, panel.want)
+			}
+		})
+	}
+}
+
 func TestOmarchySurfacesUseTerminalDefaultBackground(t *testing.T) {
 	palette, err := parseOmarchyPalette([]byte(testOmarchyPalette("#123456")))
 	if err != nil {
@@ -59,9 +109,11 @@ func TestOmarchySurfacesUseTerminalDefaultBackground(t *testing.T) {
 	}
 	theme := stylesFromOmarchyPalette(palette)
 	for name, style := range map[string]lipgloss.Style{
-		"surface": theme.styles.Surface,
-		"dialog":  theme.styles.Dialog,
-		"help":    theme.styles.HelpDialog,
+		"container": theme.styles.Container,
+		"panel":     theme.styles.MainPanel,
+		"focused":   theme.styles.FocusedPanel,
+		"overlay":   theme.styles.Overlay,
+		"help":      theme.styles.HelpOverlay,
 	} {
 		if _, transparent := style.GetBackground().(lipgloss.NoColor); !transparent {
 			t.Errorf("%s surface sets an explicit background", name)
@@ -74,6 +126,16 @@ func TestOmarchySurfacesUseTerminalDefaultBackground(t *testing.T) {
 
 func styleForeground(style lipgloss.Style) string {
 	color, _ := style.GetForeground().(lipgloss.Color)
+	return string(color)
+}
+
+func styleBackground(style lipgloss.Style) string {
+	color, _ := style.GetBackground().(lipgloss.Color)
+	return string(color)
+}
+
+func styleBorderForeground(style lipgloss.Style) string {
+	color, _ := style.GetBorderTopForeground().(lipgloss.Color)
 	return string(color)
 }
 

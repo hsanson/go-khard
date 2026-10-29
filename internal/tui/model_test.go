@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -24,7 +23,7 @@ func TestEscapeQuitsContactList(t *testing.T) {
 	}
 }
 
-func TestTabCyclesAddressbooksAndPreservesSearch(t *testing.T) {
+func TestBracketsCycleAddressbooksAndPreserveSearch(t *testing.T) {
 	one := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
 	two := config.Source{Path: "/tmp/two", Type: "addressbook", DisplayName: "Two"}
 	contacts := []contact.Contact{
@@ -39,14 +38,14 @@ func TestTabCyclesAddressbooksAndPreservesSearch(t *testing.T) {
 	}
 	m.filter()
 
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
 	if m.filterBook != one.Path || len(m.visible) != 1 || m.visible[0].Path != contacts[0].Path {
 		t.Fatalf("next addressbook: filter=%q visible=%#v", m.filterBook, m.visible)
 	}
 	if m.selectedCount() != 0 || m.search.Value() != "ada" {
 		t.Fatalf("addressbook cycle selection=%d query=%q", m.selectedCount(), m.search.Value())
 	}
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
 	if m.filterBook != "" || len(m.visible) != 1 {
 		t.Fatalf("previous addressbook: filter=%q visible=%#v", m.filterBook, m.visible)
 	}
@@ -74,25 +73,17 @@ func TestSearchFiltersAndNavigatesLive(t *testing.T) {
 	}
 }
 
-func TestTableCellUsesTerminalDisplayWidth(t *testing.T) {
-	const width = 24
-	ascii := tableCell("Cristobal Gomez", width)
-	japanese := tableCell("CSメーリングリスト", width)
-	if got := ansi.StringWidth(ascii); got != width {
-		t.Fatalf("ASCII cell width = %d, want %d", got, width)
-	}
-	if got := ansi.StringWidth(japanese); got != width {
-		t.Fatalf("Japanese cell width = %d, want %d", got, width)
-	}
+func TestClipUsesTerminalDisplayWidth(t *testing.T) {
 	if got := ansi.StringWidth(clip("非常に長い日本語の連絡先名", 12)); got > 12 {
 		t.Fatalf("clipped Japanese name width = %d, want <= 12", got)
 	}
 }
 
 func TestMoveAndDeleteRequireSelections(t *testing.T) {
-	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
-	entry := contact.Contact{Path: "/tmp/one/a.vcf", Book: book, Card: make(vcard.Card)}
-	m := &model{mode: modeList, books: []config.Source{book}, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
+	one := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
+	two := config.Source{Path: "/tmp/two", Type: "addressbook", DisplayName: "Two"}
+	entry := contact.Contact{Path: "/tmp/one/a.vcf", Book: one, Card: make(vcard.Card)}
+	m := &model{mode: modeList, books: []config.Source{one, two}, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	if m.mode != modeList || m.op != opNone {
@@ -110,7 +101,7 @@ func TestMoveAndDeleteRequireSelections(t *testing.T) {
 	}
 }
 
-func TestMouseSelectsAndOpensContacts(t *testing.T) {
+func TestMouseSelectsAndFocusesContactDetails(t *testing.T) {
 	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
 	entry := contact.Contact{Path: "/tmp/one/a.vcf", Book: book, Card: vcard.Card{vcard.FieldFormattedName: []*vcard.Field{{Value: "Ada"}}}}
 	m := &model{
@@ -144,8 +135,8 @@ func TestMouseSelectsAndOpensContacts(t *testing.T) {
 		X: contactHit.rect.x, Y: contactHit.rect.y,
 		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft,
 	}))
-	if m.mode != modeForm || m.form.editing == nil {
-		t.Fatalf("contact click mode=%v editing=%#v", m.mode, m.form.editing)
+	if m.mode != modeList || m.focusedPane != paneDetails {
+		t.Fatalf("contact click mode=%v pane=%v", m.mode, m.focusedPane)
 	}
 }
 
@@ -229,24 +220,12 @@ func TestAddEmailCreateNewPrefillsSender(t *testing.T) {
 	}
 }
 
-func TestMergeSelectionErrorIsRed(t *testing.T) {
-	entry := contact.Contact{Card: make(vcard.Card)}
-	m := &model{mode: modeList, width: 100, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
-	_ = m.startMerge()
-	if !m.messageErr {
-		t.Fatal("merge selection failure was not marked as an error")
-	}
-	if want := DefaultStyles().Error.Render("select at least two contacts to merge"); !strings.Contains(m.View(), want) {
-		t.Fatalf("merge selection error is not rendered with error style:\n%s", m.View())
-	}
-}
-
-func TestPlainEIsUnboundOnContactList(t *testing.T) {
+func TestPlainEEditsContactFromList(t *testing.T) {
 	entry := contact.Contact{Card: make(vcard.Card)}
 	m := &model{mode: modeList, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
-	if m.mode != modeList {
-		t.Fatalf("e opened contact editor: mode=%v", m.mode)
+	if m.mode != modeForm || m.form.editing == nil {
+		t.Fatalf("e did not open contact editor: mode=%v editing=%#v", m.mode, m.form.editing)
 	}
 }
 

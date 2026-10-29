@@ -96,20 +96,25 @@ func TestBirthdayUsesCalendarAndAppliesSelectedDate(t *testing.T) {
 }
 
 func TestCalendarMouseSelectsAndClearsDate(t *testing.T) {
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldBirthday, "2000-01-01")
 	m := &model{
 		mode: modeForm, width: 100, height: 40, mouse: &mouseState{},
 		form: formState{
-			card: make(vcard.Card), activeRow: editorRow{key: vcard.FieldBirthday, label: "Birthday"},
-			datePicker: newContactDatePicker("", time.Date(2025, time.January, 10, 0, 0, 0, 0, time.UTC)),
+			card: card, activeRow: editorRow{key: vcard.FieldBirthday, label: "Birthday"},
+			datePicker: newContactDatePicker("2000-01-01", time.Date(2025, time.January, 10, 0, 0, 0, 0, time.UTC)),
 		},
 	}
-	_ = m.View()
+	view := m.View()
+	if strings.Contains(view, "[ Today ]") || strings.Contains(view, "[ Clear ]") {
+		t.Fatalf("calendar retains inline Today/Clear controls:\n%s", view)
+	}
 	var day, clear mouseHit
 	for _, hit := range m.mouse.hits {
 		switch {
 		case hit.kind == mouseDateDay && hit.day.Day() == 19:
 			day = hit
-		case hit.kind == mouseDateClear:
+		case hit.kind == mouseDialogAction && hit.focus == dialogFocusDelete:
 			clear = hit
 		}
 	}
@@ -117,12 +122,44 @@ func TestCalendarMouseSelectsAndClearsDate(t *testing.T) {
 		t.Fatalf("calendar mouse targets missing: %#v", m.mouse.hits)
 	}
 	_, _ = m.updateMouse(tea.MouseEvent{X: day.rect.x, Y: day.rect.y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	if got := m.form.datePicker.value(); got != "2025-01-19" {
+	if got := m.form.datePicker.value(); got != "2000-01-19" {
 		t.Fatalf("mouse-selected date = %q", got)
 	}
 	_, _ = m.updateMouse(tea.MouseEvent{X: clear.rect.x, Y: clear.rect.y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	if got := m.form.datePicker.value(); got != "" {
-		t.Fatalf("mouse-cleared date = %q", got)
+	if m.form.datePicker != nil || m.form.card.Value(vcard.FieldBirthday) != "" {
+		t.Fatalf("Clear did not clear and close the picker: %#v", m.form)
+	}
+}
+
+func TestCalendarKeyboardClearAction(t *testing.T) {
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldAnniversary, "2000-01-01")
+	m := &model{
+		mode: modeForm,
+		form: formState{
+			card: card, activeRow: editorRow{key: vcard.FieldAnniversary, label: "Anniversary"},
+			datePicker: newContactDatePicker("2000-01-01", time.Date(2025, time.January, 10, 0, 0, 0, 0, time.UTC)),
+		},
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if got := m.form.datePicker.value(); got != "2000-01-01" {
+		t.Fatalf("removed calendar shortcuts changed the date to %q", got)
+	}
+	for range 3 {
+		_, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	}
+	if m.form.dialogFocus != dialogFocusDelete {
+		t.Fatalf("third Tab focus = %v, want Clear", m.form.dialogFocus)
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if m.form.dialogFocus != dialogFocusDelete {
+		t.Fatalf("h/l action focus = %v, want Clear", m.form.dialogFocus)
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form.datePicker != nil || m.form.card.Value(vcard.FieldAnniversary) != "" {
+		t.Fatalf("keyboard Clear did not clear and close the picker: %#v", m.form)
 	}
 }
 

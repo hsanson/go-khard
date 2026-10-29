@@ -87,57 +87,74 @@ background. A missing or invalid startup palette uses the built-in styles; an
 invalid runtime update keeps the last valid palette until it is repaired. Other
 platforms always use the built-in styles.
 
-The main view displays each contact's name, address book, preferred email, and
-preferred phone. Press `/` to search names, email addresses, and phone numbers
-with fuzzy matching. While searching, use `ctrl-j`/`ctrl-k` or the arrow keys to
-move through results. Press `enter` to keep the filter or `esc` to clear it.
+The main workspace keeps contact names in the left pane and the selected
+contact's read-only details in the right pane. Details include the address book
+and every populated editor field. Notes wrap without truncation. The vCard path
+stays hidden; use its Copy button to copy it to the system clipboard.
+
+Press `/` to search names, email addresses, and phone numbers with fuzzy
+matching. While searching, use `ctrl-j`/`ctrl-k` or the arrow keys to move
+through results. Press `enter` to keep the filter or `esc` to clear it.
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` or `up` / `down` | move |
-| `ctrl-f` / `ctrl-b` or `page-down` / `page-up` | move one page |
+| `tab` / `shift-tab` or `h` / `l` | move between Contacts and Details |
+| `j` / `k` or `up` / `down` | move through contacts or scroll Details |
+| `ctrl-f` / `ctrl-b` or `page-down` / `page-up` | move or scroll one page |
+| `[` / `]` | cycle through All and each address book |
 | `/` | search contacts |
-| `tab` / `shift-tab` | cycle through All and each address book |
-| `enter` | edit contact |
-| `n` | create contact |
-| `space` | select/unselect contact |
-| `c` | copy the current or selected contacts |
+| `enter` | focus Details from Contacts; edit from Details |
+| `e` | edit the current contact |
+| `n` | create a contact |
+| `space` | select or unselect a contact |
+| `c` | copy selected contacts |
 | `m` | move selected contacts |
 | `M` | merge two or more selected contacts |
 | `d` | delete selected contacts |
-| `q` / `esc` | quit |
+| `q` / `esc` | return to Contacts from Details; quit from Contacts |
 | `?` | show shortcuts for the current screen |
 
-Move, merge, and delete appear only when enough contacts are selected. Copy,
-move, and delete require confirmation. Merge combines list-valued fields,
+The Contacts pane shows Move, Copy, and Merge buttons when their selection
+requirements are met. Copy and Move require at least one selected contact; Merge
+requires at least two. Move stays hidden when no other address book exists.
+Copy, move, and delete require confirmation. Merge combines list-valued fields,
 prompts for scalar conflicts, opens a review form, and asks for final
 confirmation before saving the merged contact and removing its sources.
 
-The footer lists every shortcut available in the current screen or dialog.
-Field dialogs contain no shortcut labels.
+The footer lists every shortcut available in the current pane or dialog. Field
+dialogs contain no shortcut labels.
 
 The add, edit, and merge-review screens use a sectioned item editor covering
 identity and structured names, kind, nicknames, dates, organizations, titles,
 roles, typed phone numbers and emails, structured postal addresses, categories,
-webpages, private `X-*` properties, and notes. Use `j`/`k`, the arrow keys, or
-tab/shift-tab to navigate. Highlighted `󰐕 Add …` buttons append repeatable
-values. Save and Cancel buttons finish the contact form.
+webpages, private `X-*` properties, and notes. Normal forms and workflows open
+in the right pane while the Contacts pane remains visible. Use `j`/`k`, the
+arrow keys, or tab/shift-tab to navigate. Highlighted `󰐕 Add …` buttons append
+repeatable values. Save and Cancel finish every contact form; editing an
+existing contact also shows Delete. `go-khard add-email` keeps its full-screen
+form and exits after save or cancel.
 
-All dialogs use 60% of the terminal width. Field overlays reserve action slots
-for Apply, Cancel, and the optional Delete button. Existing repeatable items
-have a red Delete button. Tab/down and shift-tab/up move
-through fields and buttons; Enter on the final field applies the form directly.
-Select fields also use `j`/`k`, `h`/`l`, or left/right to change options. In the
-Note field, up/down moves the cursor and `ctrl-enter` inserts a newline.
+Field overlays reserve action slots for Apply, Cancel, and the optional Delete
+button. Existing repeatable items have a red Delete button. Enter advances
+through multi-field overlays. On the final valid field, Enter focuses Apply;
+press Enter again to apply the change. Invalid fields retain focus and show
+their validation error. Tab/down and shift-tab/up provide the same navigation.
+Select fields also use `j`/`k`, `h`/`l`, or left/right to change options. In
+the Note field, up/down moves the cursor and `ctrl-enter` inserts a newline.
+Action buttons remain on one row when they fit; Delete moves to a right-aligned
+second row only when the dialog is too narrow.
 
 Birthday and Anniversary use a single-date calendar with keyboard and mouse
-navigation, Today, Clear, Apply, and Cancel controls. The `‹`/`›` buttons move
-one month and `«`/`»` move one year; `ctrl+k`/`ctrl+j` and
-`ctrl+h`/`ctrl+l` provide the same keyboard navigation. Empty and legacy vCard
-dates remain unchanged until a date is explicitly selected or cleared.
+navigation. The `‹`/`›` buttons move one month and `«`/`»` move one year;
+`ctrl+k`/`ctrl+j` and `ctrl+h`/`ctrl+l` provide the same keyboard navigation.
+Apply and Cancel appear below the calendar. Clear occupies the destructive
+bottom-right action, clears the date, and closes the calendar immediately.
+Empty and legacy vCard dates remain unchanged until a date is selected or
+cleared.
 
-Mouse input supports wheel navigation, address-book cycling, contact and field
-opening, and every visible button. Ctrl-click selects or unselects a contact.
+Mouse input supports wheel navigation, pane focusing, address-book cycling,
+contact and field opening, and every visible button. Click the current contact
+again to focus Details. Ctrl-click selects or unselects a contact.
 
 Phone and email entries allow multiple types, while address entries use a
 single type. Extra type labels can be added to the shared khal configuration:

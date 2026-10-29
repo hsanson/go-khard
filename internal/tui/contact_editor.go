@@ -20,84 +20,94 @@ var sectionIcons = map[string]string{
 	"file": "󰈔",
 }
 
-func (m *model) editorRows() []editorRow {
-	card := m.form.card
+func contactFieldRows(card vcard.Card, editable bool) []editorRow {
 	var rows []editorRow
-	section := func(key, title string) {
-		rows = append(rows, editorRow{section: true, label: sectionIcons[key] + "  " + title})
-	}
-	scalar := func(key, label string) {
-		rows = append(rows, editorRow{key: key, label: label, value: scalarValue(card, key)})
-	}
-	repeat := func(key, label, addLabel string) {
-		for i, f := range card[key] {
-			rows = append(rows, editorRow{key: key, index: i, label: indexedLabel(label, f, i), value: displayField(key, f)})
+	appendSection := func(key, title string, fields []editorRow) {
+		if !editable && len(fields) == 0 {
+			return
 		}
-		rows = append(rows, editorRow{key: key, label: "󰐕 Add " + addLabel, add: true})
+		rows = append(rows, editorRow{section: true, label: sectionIcons[key] + "  " + title})
+		rows = append(rows, fields...)
+	}
+	scalars := func(values ...string) []editorRow {
+		fields := make([]editorRow, 0, len(values)/2)
+		for i := 0; i < len(values); i += 2 {
+			value := scalarValue(card, values[i])
+			if editable || strings.TrimSpace(value) != "" {
+				fields = append(fields, editorRow{key: values[i], label: values[i+1], value: value})
+			}
+		}
+		return fields
+	}
+	repeated := func(key, label, addLabel string) []editorRow {
+		fields := make([]editorRow, 0, len(card[key])+1)
+		for i, field := range card[key] {
+			fields = append(fields, editorRow{key: key, index: i, label: indexedLabel(label, field, i), value: displayField(key, field)})
+		}
+		if editable {
+			fields = append(fields, editorRow{key: key, label: "󰐕 Add " + addLabel, add: true})
+		}
+		return fields
 	}
 
+	appendSection("identity", "Identity", scalars(
+		vcard.FieldFormattedName, "Formatted name",
+		vcard.FieldKind, "Kind",
+		"name-prefix", "Prefix",
+		"name-first", "First name",
+		"name-additional", "Additional",
+		"name-last", "Last name",
+		"name-suffix", "Suffix",
+	))
+	appendSection("nickname", "Nicknames", repeated(vcard.FieldNickname, "Nickname", "nickname"))
+	appendSection("dates", "Important dates", scalars(
+		vcard.FieldAnniversary, "Anniversary",
+		vcard.FieldBirthday, "Birthday",
+	))
+	appendSection("work", "Organisation", repeated(vcard.FieldOrganization, "Organisation", "organisation"))
+	appendSection("title", "Titles", repeated(vcard.FieldTitle, "Title", "title"))
+	appendSection("role", "Roles", repeated(vcard.FieldRole, "Role", "role"))
+	appendSection("phones", "Phone numbers", repeated(vcard.FieldTelephone, "Phone", "phone"))
+	appendSection("emails", "Email addresses", repeated(vcard.FieldEmail, "Email", "email"))
+	appendSection("addresses", "Postal addresses", repeated(vcard.FieldAddress, "Address", "address"))
+	appendSection("categories", "Categories", repeated(vcard.FieldCategories, "Category", "category"))
+	appendSection("online", "Web pages", repeated(vcard.FieldURL, "Webpage", "webpage"))
+
+	private := make([]editorRow, 0)
+	for _, key := range privateKeys(card) {
+		for i, field := range card[key] {
+			private = append(private, editorRow{key: key, index: i, label: strings.TrimPrefix(key, "X-"), value: field.Value})
+		}
+	}
+	if editable {
+		private = append(private, editorRow{key: "private-add", label: "󰐕 Add private property", add: true})
+	}
+	appendSection("private", "Private properties", private)
+	appendSection("notes", "Notes", scalars(vcard.FieldNote, "Note"))
+	return rows
+}
+
+func (m *model) editorRows() []editorRow {
+	var rows []editorRow
 	if m.form.editing == nil {
-		section("storage", "Address book")
 		book := "(no addressbooks)"
 		if len(m.books) > 0 {
 			book = m.books[m.form.book].Name()
 		}
-		rows = append(rows, editorRow{key: "addressbook", label: "Addressbook", value: book})
+		rows = append(rows,
+			editorRow{section: true, label: sectionIcons["storage"] + "  Address book"},
+			editorRow{key: "addressbook", label: "Addressbook", value: book},
+		)
 	}
-
-	section("identity", "Identity")
-	scalar(vcard.FieldFormattedName, "Formatted name")
-	scalar(vcard.FieldKind, "Kind")
-	scalar("name-prefix", "Prefix")
-	scalar("name-first", "First name")
-	scalar("name-additional", "Additional")
-	scalar("name-last", "Last name")
-	scalar("name-suffix", "Suffix")
-	section("nickname", "Nicknames")
-	repeat(vcard.FieldNickname, "Nickname", "nickname")
-
-	section("dates", "Important dates")
-	scalar(vcard.FieldAnniversary, "Anniversary")
-	scalar(vcard.FieldBirthday, "Birthday")
-
-	section("work", "Organisation")
-	repeat(vcard.FieldOrganization, "Organisation", "organisation")
-	section("title", "Titles")
-	repeat(vcard.FieldTitle, "Title", "title")
-	section("role", "Roles")
-	repeat(vcard.FieldRole, "Role", "role")
-
-	section("phones", "Phone numbers")
-	repeat(vcard.FieldTelephone, "Phone", "phone")
-	section("emails", "Email addresses")
-	repeat(vcard.FieldEmail, "Email", "email")
-	section("addresses", "Postal addresses")
-	repeat(vcard.FieldAddress, "Address", "address")
-
-	section("categories", "Categories")
-	repeat(vcard.FieldCategories, "Category", "category")
-	section("online", "Web pages")
-	repeat(vcard.FieldURL, "Webpage", "webpage")
-
-	section("private", "Private properties")
-	for _, key := range privateKeys(card) {
-		for i, f := range card[key] {
-			rows = append(rows, editorRow{key: key, index: i, label: strings.TrimPrefix(key, "X-"), value: f.Value})
-		}
-	}
-	rows = append(rows, editorRow{key: "private-add", label: "󰐕 Add private property", add: true})
-
-	section("notes", "Notes")
-	scalar(vcard.FieldNote, "Note")
-	if m.form.path != "" {
-		section("file", "vCard file")
-		rows = append(rows, editorRow{key: "file-path", label: "Path", value: m.form.path})
-	}
-	section("actions", "Actions")
+	rows = append(rows, contactFieldRows(m.form.card, true)...)
 	rows = append(rows,
+		editorRow{section: true, label: "Actions"},
 		editorRow{key: "form-save", label: "Save"},
 		editorRow{key: "form-cancel", label: "Cancel"},
 	)
+	if m.form.editing != nil {
+		rows = append(rows, editorRow{key: "form-delete", label: "Delete"})
+	}
 	return rows
 }
 
@@ -114,12 +124,12 @@ func (m *model) moveEditorCursor(rows []editorRow, delta int) {
 }
 
 func selectableEditorRow(row editorRow) bool {
-	return !row.section && row.key != "file-path"
+	return !row.section
 }
 
 func removableEditorRow(row editorRow) bool {
 	return selectableEditorRow(row) && !row.add && row.key != "addressbook" &&
-		row.key != "form-save" && row.key != "form-cancel" &&
+		row.key != "form-save" && row.key != "form-cancel" && row.key != "form-delete" &&
 		row.key != vcard.FieldFormattedName && row.key != vcard.FieldKind && row.key != vcard.FieldNote &&
 		row.key != vcard.FieldBirthday && row.key != vcard.FieldAnniversary && !isNameKey(row.key)
 }
@@ -164,10 +174,8 @@ func (m *model) updateActiveEditorForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.form.dialogFocus != dialogFocusControl {
 				return m.activateEditorDialog()
 			}
-			if m.form.dialogField == m.form.dialogFields-1 {
-				m.submitEditorDialog()
-				return m, nil
-			}
+			m.moveEditorDialogFocus(1)
+			return m, nil
 		case " ":
 			if m.form.dialogFocus != dialogFocusControl {
 				return m.activateEditorDialog()
@@ -180,6 +188,12 @@ func (m *model) updateActiveEditorForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.form.activeForm.Update(msg)
 	if form, ok := updated.(*huh.Form); ok {
 		m.form.activeForm = form
+		switch form.State {
+		case huh.StateAborted:
+			m.cancelEditorDialog()
+		case huh.StateCompleted:
+			m.completeEditorDialog()
+		}
 	}
 	return m, cmd
 }
@@ -189,7 +203,7 @@ func (m *model) openEditorPopup(rows []editorRow) tea.Cmd {
 		return nil
 	}
 	row := rows[m.form.cursor]
-	if !selectableEditorRow(row) || row.key == "form-save" || row.key == "form-cancel" {
+	if !selectableEditorRow(row) || row.key == "form-save" || row.key == "form-cancel" || row.key == "form-delete" {
 		return nil
 	}
 	m.form.activeRow = row
@@ -259,8 +273,13 @@ func (m *model) moveEditorDialogFocus(delta int) {
 			m.setEditorDialogField(next)
 			return
 		}
-		m.form.activeForm.GetFocusedField().Blur()
+		field := m.form.activeForm.GetFocusedField()
+		field.Blur()
 		if delta > 0 {
+			if field.Error() != nil {
+				field.Focus()
+				return
+			}
 			m.form.dialogFocus = dialogFocusPrimary
 		} else if m.editorDialogHasDelete() {
 			m.form.dialogFocus = dialogFocusDelete
@@ -311,6 +330,13 @@ func (m *model) cancelEditorDialog() {
 	m.form.tmpTypes = nil
 	m.form.dialogFocus = dialogFocusControl
 }
+func (m *model) completeEditorDialog() {
+	m.applyEditorPopup()
+	m.form.activeForm = nil
+	m.form.tmp = nil
+	m.form.tmpTypes = nil
+	m.form.dialogFocus = dialogFocusControl
+}
 
 func (m *model) submitEditorDialog() {
 	if m.form.datePicker != nil {
@@ -326,11 +352,7 @@ func (m *model) submitEditorDialog() {
 		m.form.dialogFocus = dialogFocusControl
 		return
 	}
-	m.applyEditorPopup()
-	m.form.activeForm = nil
-	m.form.tmp = nil
-	m.form.tmpTypes = nil
-	m.form.dialogFocus = dialogFocusControl
+	m.completeEditorDialog()
 }
 
 func (m *model) deleteActiveEditorRow() {
@@ -360,7 +382,12 @@ func (m *model) activateEditorDialog() (tea.Model, tea.Cmd) {
 	case dialogFocusCancel:
 		m.cancelEditorDialog()
 	case dialogFocusDelete:
-		m.deleteActiveEditorRow()
+		if m.form.datePicker != nil {
+			m.form.datePicker.clear()
+			m.submitEditorDialog()
+		} else {
+			m.deleteActiveEditorRow()
+		}
 	}
 	return m, nil
 }

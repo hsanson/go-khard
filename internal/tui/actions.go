@@ -33,11 +33,10 @@ func (m *model) targets() []contact.Contact {
 	if m.op == opMerge && len(m.mergeTargets) > 0 {
 		return m.mergeTargets
 	}
-	out := m.selectedTargets()
-	if len(out) == 0 && m.op == opCopy && m.current() != nil {
-		out = append(out, *m.current())
+	if m.op == opDelete && m.deleteTarget != nil {
+		return []contact.Contact{*m.deleteTarget}
 	}
-	return out
+	return m.selectedTargets()
 }
 
 func (m *model) updateEmailMatches(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -70,7 +69,6 @@ func (m *model) activateEmailMatchDialog() (tea.Model, tea.Cmd) {
 	if m.emailMatchCursor == len(m.emailMatches) {
 		m.startForm(&m.emailSender, nil)
 		m.form.editing = nil
-		m.form.path = ""
 		return m, nil
 	}
 	existing := m.emailMatches[m.emailMatchCursor]
@@ -94,14 +92,7 @@ func (m *model) selectedCount() int {
 	return n
 }
 func (m *model) pageSize() int {
-	used := 2
-	if m.message != "" {
-		used++
-	}
-	if m.mode == modeSearch {
-		used++
-	}
-	return max(1, m.mainHeight()-used)
+	return m.contactListBodyHeight(m.listPaneHeight())
 }
 func (m *model) clamp() {
 	if len(m.visible) == 0 {
@@ -131,6 +122,7 @@ func (m *model) filter() {
 	}
 	m.cursor = 0
 	m.offset = 0
+	m.resetDetailState()
 }
 
 func (m *model) cycleAddressbook(delta int) {
@@ -192,10 +184,6 @@ func clip(s string, n int) string {
 	}
 	return ansi.Truncate(s, n, "…")
 }
-func tableCell(s string, width int) string {
-	s = clip(s, width)
-	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
-}
 
 func (m *model) startBookOperation(op operation) {
 	m.op = op
@@ -241,6 +229,7 @@ func (m *model) activateBookDialog() (tea.Model, tea.Cmd) {
 
 func (m *model) startConfirmation(op operation) {
 	m.op = op
+	m.deleteTarget = nil
 	if len(m.targets()) == 0 {
 		m.op = opNone
 		m.message = "no contact"
@@ -274,20 +263,40 @@ func (m *model) activateConfirmation() (tea.Model, tea.Cmd) {
 	if m.op == opMerge {
 		return m, m.saveForm()
 	}
+	preferred, fallback := m.currentPath(), m.cursor
+	deleteFromForm := m.op == opDelete && m.deleteTarget != nil
 	err := m.executeOperation()
+	if deleteFromForm && err != nil {
+		m.form.errMsg = err.Error()
+		m.mode = modeForm
+		m.op = opNone
+		m.deleteTarget = nil
+		return m, nil
+	}
 	m.mode = modeList
 	m.op = opNone
-	m.reload(err)
+	m.deleteTarget = nil
+	if deleteFromForm {
+		m.form = formState{}
+		m.focusedPane = m.formOrigin
+		preferred = ""
+	}
+	m.reload(err, preferred, fallback)
 	return m, nil
 }
 
 func (m *model) cancelConfirmation() {
-	switch m.op {
-	case opCopy, opMove:
+	switch {
+	case m.op == opCopy || m.op == opMove:
 		m.mode = modeBooks
 		m.dialogFocus = dialogFocusControl
-	case opMerge:
+	case m.op == opMerge:
 		m.mode = modeForm
+		m.dialogFocus = dialogFocusControl
+	case m.op == opDelete && m.deleteTarget != nil:
+		m.mode = modeForm
+		m.op = opNone
+		m.deleteTarget = nil
 		m.dialogFocus = dialogFocusControl
 	default:
 		m.mode = modeList
@@ -328,22 +337,28 @@ func (m *model) executeOperation() error {
 	}
 	return nil
 }
-func (m *model) reload(err error) {
+func (m *model) reload(err error, preferredPath string, fallback int) {
 	if err != nil {
 		m.message = "error: " + err.Error()
 		m.messageErr = true
 		return
 	}
-	cs, e := m.store.Load()
-	if e != nil {
-		m.message = "error: " + e.Error()
+	contacts, loadErr := m.store.Load()
+	if loadErr != nil {
+		m.message = "error: " + loadErr.Error()
 		m.messageErr = true
 		return
 	}
-	m.contacts = cs
+	m.contacts = contacts
 	m.selected = map[string]bool{}
 	m.search.SetValue("")
 	m.filter()
+	if index := selectedContactByPath(m.visible, preferredPath); index >= 0 {
+		m.cursor = index
+	} else if len(m.visible) > 0 {
+		m.cursor = min(fallback, len(m.visible)-1)
+	}
+	m.clamp()
 	m.message = "saved"
 	m.messageErr = false
 }
@@ -369,12 +384,20 @@ func (m *model) startForm(c *contact.Contact, merged []contact.Contact) {
 			}
 		}
 	}
-	path := ""
-	if c != nil {
-		path = c.Path
-	}
-	m.form = formState{card: card, cursor: 1, book: book, editing: c, merged: merged, path: path}
+	m.formOrigin = m.focusedPane
+	m.form = formState{card: card, cursor: 1, book: book, editing: c, merged: merged}
 	m.mode = modeForm
+}
+
+func (m *model) startFormDelete() {
+	if m.form.editing == nil {
+		return
+	}
+	target := *m.form.editing
+	m.deleteTarget = &target
+	m.op = opDelete
+	m.mode = modeConfirm
+	m.dialogFocus = dialogFocusCancel
 }
 
 func (m *model) preparedFormCard() (vcard.Card, bool) {
@@ -414,6 +437,7 @@ func (m *model) cancelForm() (tea.Model, tea.Cmd) {
 	m.mode = modeList
 	m.op = opNone
 	m.mergeTargets = nil
+	m.focusedPane = m.formOrigin
 	return m, nil
 }
 
@@ -431,25 +455,33 @@ func (m *model) saveForm() tea.Cmd {
 	if m.form.editing != nil && m.form.editing.Book.Path != book.Path {
 		existing = ""
 	}
-	_, err := m.store.Save(card, book, existing)
+	savedPath, err := m.store.Save(card, book, existing)
 	if err == nil && m.form.editing != nil && existing == "" {
 		err = m.store.Delete(*m.form.editing)
 	}
 	if err == nil && len(m.form.merged) > 0 {
 		for _, c := range m.form.merged {
 			if c.Path != "" && c.Path != existing {
-				if e := m.store.Delete(c); e != nil && !os.IsNotExist(e) {
-					err = e
+				if deleteErr := m.store.Delete(c); deleteErr != nil && !os.IsNotExist(deleteErr) {
+					err = deleteErr
 					break
 				}
 			}
 		}
 	}
+	if err != nil {
+		m.form.errMsg = err.Error()
+		m.mode = modeForm
+		m.op = opNone
+		return nil
+	}
+	fallback := m.cursor
 	m.mode = modeList
 	m.op = opNone
 	m.mergeTargets = nil
-	m.reload(err)
-	if err == nil && m.quitAfterSave {
+	m.focusedPane = m.formOrigin
+	m.reload(nil, savedPath, fallback)
+	if m.quitAfterSave {
 		return tea.Quit
 	}
 	return nil

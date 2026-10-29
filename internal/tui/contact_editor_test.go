@@ -64,7 +64,7 @@ func TestEditHidesAddressbookAndAddShowsItFirst(t *testing.T) {
 	}
 }
 
-func TestEnterOpensEditorAndPathIsNotSelectable(t *testing.T) {
+func TestEnterFocusesDetailsAndEditorHasDeleteWithoutPath(t *testing.T) {
 	book := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}
 	card := make(vcard.Card)
 	card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
@@ -73,31 +73,28 @@ func TestEnterOpensEditorAndPathIsNotSelectable(t *testing.T) {
 	m := &model{mode: modeList, books: []config.Source{book}, contacts: []contact.Contact{entry}, visible: []contact.Contact{entry}, selected: map[string]bool{}}
 
 	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeList || m.focusedPane != paneDetails {
+		t.Fatalf("enter from Contacts: mode=%v pane=%v", m.mode, m.focusedPane)
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.mode != modeForm || m.form.editing == nil {
-		t.Fatalf("enter did not open contact editor: mode=%v editing=%#v", m.mode, m.form.editing)
+		t.Fatalf("enter from Details did not edit: mode=%v editing=%#v", m.mode, m.form.editing)
 	}
 
-	rows := m.editorRows()
-	pathIndex := -1
-	for i, row := range rows {
+	foundDelete := false
+	for _, row := range m.editorRows() {
 		if row.key == "addressbook" {
 			t.Fatal("existing contact editor allows changing addressbook")
 		}
-		if row.key == "file-path" && row.value == entry.Path {
-			pathIndex = i
-			m.form.cursor = i
-			if cmd := m.openEditorPopup(rows); cmd != nil {
-				t.Fatal("file path row opened an editor")
-			}
+		if row.key == "file-path" || strings.Contains(row.value, entry.Path) {
+			t.Fatal("edit form still displays the vCard path")
+		}
+		if row.key == "form-delete" {
+			foundDelete = true
 		}
 	}
-	if pathIndex < 0 {
-		t.Fatal("edit view does not display vCard path")
-	}
-	m.form.cursor = pathIndex - 1
-	m.moveEditorCursor(rows, 1)
-	if rows[m.form.cursor].key == "file-path" || rows[m.form.cursor].section {
-		t.Fatalf("navigation selected non-editable row: %#v", rows[m.form.cursor])
+	if !foundDelete {
+		t.Fatal("edit form has no Delete action")
 	}
 }
 
@@ -207,7 +204,7 @@ func TestNoteContinuationLinesAreIndented(t *testing.T) {
 	m := &model{width: 80, height: 200, mode: modeForm, form: formState{card: card}}
 	view := m.formView()
 	indent := strings.Repeat(" ", 24)
-	if !strings.Contains(view, "\n"+indent+m.styles.FieldValue.Render("second line")) {
+	if !strings.Contains(view, "\n"+indent+m.styles.Value.Render("second line")) {
 		t.Fatalf("note continuation is not aligned with value column:\n%s", view)
 	}
 }
@@ -310,6 +307,24 @@ func TestEditorDialogTraversesFieldsAndActions(t *testing.T) {
 		t.Fatalf("Shift-Tab from Apply: focus=%v field=%d", m.form.dialogFocus, m.form.dialogField)
 	}
 }
+func TestEnterAdvancesToNextEditorField(t *testing.T) {
+	m := &model{cfg: config.Default(), mode: modeForm, form: formState{card: make(vcard.Card)}}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldOrganization && row.add {
+			m.form.cursor = i
+			break
+		}
+	}
+	teaModel := runHuhNavigation(m, m.openEditorPopup(rows))
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Analytical Engines")})
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyEnter})
+	m = teaModel.(*model)
+
+	if m.form.dialogField != 1 || m.form.dialogFocus != dialogFocusControl {
+		t.Fatalf("Enter from first field: field=%d focus=%v", m.form.dialogField, m.form.dialogFocus)
+	}
+}
 
 func TestJKChangesSelectAndMultiSelectOptions(t *testing.T) {
 	m := &model{cfg: config.Default(), mode: modeForm, width: 100, form: formState{card: make(vcard.Card)}}
@@ -344,7 +359,76 @@ func TestJKChangesSelectAndMultiSelectOptions(t *testing.T) {
 	}
 }
 
-func TestEnterOnFinalEditorFieldApplies(t *testing.T) {
+func TestEnterOnFinalEditorFieldFocusesApply(t *testing.T) {
+	tests := []struct {
+		name          string
+		key           string
+		first, last   string
+		advanceFields int
+	}{
+		{name: "organization", key: vcard.FieldOrganization, first: "Analytical Engines", last: "Research", advanceFields: 1},
+		{name: "phone", key: vcard.FieldTelephone, last: "+44 1234 567890", advanceFields: 1},
+		{name: "email", key: vcard.FieldEmail, last: "ada@example.test", advanceFields: 1},
+		{name: "postal address", key: vcard.FieldAddress, last: "UK", advanceFields: 7},
+		{name: "private property", key: "private-add", first: "Jabber", last: "ada@example.test", advanceFields: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := &model{cfg: config.Default(), mode: modeForm, form: formState{card: make(vcard.Card)}}
+			rows := m.editorRows()
+			for i, row := range rows {
+				if row.key == test.key && row.add {
+					m.form.cursor = i
+					break
+				}
+			}
+			teaModel := runHuhNavigation(m, m.openEditorPopup(rows))
+			if test.first != "" {
+				teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(test.first)})
+			}
+			for range test.advanceFields {
+				teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyEnter})
+			}
+			teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(test.last)})
+			m = teaModel.(*model)
+
+			teaModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = teaModel.(*model)
+			if m.form.dialogFocus != dialogFocusPrimary || m.form.activeForm == nil ||
+				strings.TrimSpace(m.form.activeForm.View()) == "" {
+				t.Fatalf("final Enter: focus=%v form=%v", m.form.dialogFocus, m.form.activeForm)
+			}
+
+			teaModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = teaModel.(*model)
+			if m.form.activeForm != nil {
+				t.Fatal("Enter on Apply left the field dialog open")
+			}
+		})
+	}
+}
+func TestInvalidFinalEditorFieldKeepsFocus(t *testing.T) {
+	m := &model{cfg: config.Default(), mode: modeForm, form: formState{card: make(vcard.Card)}}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldEmail && row.add {
+			m.form.cursor = i
+			break
+		}
+	}
+	teaModel := runHuhNavigation(m, m.openEditorPopup(rows))
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyEnter})
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("invalid")})
+	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyEnter})
+	m = teaModel.(*model)
+
+	if m.form.dialogFocus != dialogFocusControl || m.form.dialogField != 1 ||
+		m.form.activeForm.GetFocusedField().Error() == nil {
+		t.Fatalf("invalid final field: focus=%v field=%d error=%v",
+			m.form.dialogFocus, m.form.dialogField, m.form.activeForm.GetFocusedField().Error())
+	}
+}
+func TestCompletedEditorPopupDoesNotRenderEmptyDialog(t *testing.T) {
 	m := &model{mode: modeForm, form: formState{card: make(vcard.Card)}}
 	rows := m.editorRows()
 	for i, row := range rows {
@@ -355,13 +439,14 @@ func TestEnterOnFinalEditorFieldApplies(t *testing.T) {
 	}
 	teaModel := runHuhNavigation(m, m.openEditorPopup(rows))
 	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Ada Lovelace")})
-	teaModel = updateAndRunHuhNavigation(teaModel, tea.KeyMsg{Type: tea.KeyEnter})
+	teaModel = updateAndRunHuhNavigation(teaModel, huh.NextField())
 	m = teaModel.(*model)
+
 	if m.form.activeForm != nil {
-		t.Fatal("Enter on the final field left an empty action dialog open")
+		t.Fatalf("completed form left an empty dialog open:\n%s", m.formView())
 	}
 	if got := m.form.card.Value(vcard.FieldFormattedName); got != "Ada Lovelace" {
-		t.Fatalf("formatted name after Enter = %q", got)
+		t.Fatalf("completed form value = %q", got)
 	}
 }
 
@@ -415,6 +500,47 @@ func TestContactFormScrollsToFocusedActions(t *testing.T) {
 		t.Fatalf("focused form actions are outside the viewport:\n%s", view)
 	}
 }
+func TestContactFormUsesResponsiveActionRows(t *testing.T) {
+	for _, test := range []struct {
+		width    int
+		sameLine bool
+	}{
+		{width: 26, sameLine: true},
+		{width: 24, sameLine: false},
+	} {
+		card := make(vcard.Card)
+		card.SetValue(vcard.FieldFormattedName, "Ada Lovelace")
+		entry := contact.Contact{Card: card}
+		m := &model{
+			width: test.width, height: 10, mode: modeForm, mouse: &mouseState{}, styles: DefaultStyles(),
+			form: formState{card: card, editing: &entry},
+		}
+		for i, row := range m.editorRows() {
+			if row.key == "form-delete" {
+				m.form.cursor = i
+				break
+			}
+		}
+		lines := strings.Split(ansi.Strip(m.formBaseView()), "\n")
+		saveLine, deleteLine := -1, -1
+		for i, line := range lines {
+			if strings.Contains(line, "Save") && strings.Contains(line, "Cancel") {
+				saveLine = i
+			}
+			if strings.Contains(line, "Delete") {
+				deleteLine = i
+			}
+		}
+		if saveLine < 0 || deleteLine < 0 || (saveLine == deleteLine) != test.sameLine {
+			t.Fatalf("width %d action rows:\n%s", test.width, strings.Join(lines, "\n"))
+		}
+		for _, hit := range m.mouse.hits {
+			if hit.kind == mouseEditorRow && hit.index == m.form.cursor && hit.rect.y != deleteLine {
+				t.Fatalf("width %d Delete mouse row = %d, rendered row = %d", test.width, hit.rect.y, deleteLine)
+			}
+		}
+	}
+}
 
 func TestFieldDialogOverlaysContactForm(t *testing.T) {
 	card := make(vcard.Card)
@@ -462,15 +588,50 @@ func renderedDialogWidth(view string) int {
 	return 0
 }
 
-func TestDeleteActionReservesAnEmptyButtonSlot(t *testing.T) {
-	_, hits := dialogWithActions("", []dialogAction{
-		{label: "Apply", focus: dialogFocusPrimary},
-		{label: "Cancel", focus: dialogFocusCancel},
-		{label: "Delete", focus: dialogFocusDelete, destructive: true},
-	}, dialogFocusControl, DefaultStyles())
-	cancel, remove := hits[1].rect, hits[2].rect
-	if gap := remove.x - (cancel.x + cancel.width); gap < remove.width+4 {
-		t.Fatalf("Cancel/Delete gap = %d, want room for another button", gap)
+func TestDeleteActionUsesResponsiveRowsAndMouseTargets(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		width    int
+		sameLine bool
+	}{
+		{name: "fits one row", width: 60, sameLine: true},
+		{name: "wraps when required", width: 50, sameLine: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			card := make(vcard.Card)
+			card.AddValue(vcard.FieldEmail, "ada@example.test")
+			m := &model{
+				cfg: config.Default(), mode: modeForm, width: test.width, height: 40,
+				mouse: &mouseState{}, styles: DefaultStyles(), form: formState{card: card},
+			}
+			rows := m.editorRows()
+			for i, row := range rows {
+				if row.key == vcard.FieldEmail && !row.add {
+					m.form.cursor = i
+					_ = m.openEditorPopup(rows)
+					break
+				}
+			}
+			m.form.dialogFocus = dialogFocusDelete
+			view := strings.Split(ansi.Strip(m.formView()), "\n")
+			applyLine, deleteLine := -1, -1
+			for i, line := range view {
+				if strings.Contains(line, "Apply") && strings.Contains(line, "Cancel") {
+					applyLine = i
+				}
+				if strings.Contains(line, "Delete") {
+					deleteLine = i
+				}
+			}
+			if applyLine < 0 || deleteLine < 0 || (applyLine == deleteLine) != test.sameLine {
+				t.Fatalf("action rows do not match width %d:\n%s", test.width, strings.Join(view, "\n"))
+			}
+			for _, hit := range m.mouse.hits {
+				if hit.kind == mouseDialogAction && hit.focus == dialogFocusDelete && hit.rect.y != deleteLine {
+					t.Fatalf("Delete mouse row = %d, rendered row = %d", hit.rect.y, deleteLine)
+				}
+			}
+		})
 	}
 }
 

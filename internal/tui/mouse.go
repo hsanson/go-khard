@@ -10,7 +10,13 @@ type mouseTarget uint8
 
 const (
 	mouseAddressbook mouseTarget = iota + 1
+	mouseContactsPane
+	mouseDetailsPane
 	mouseContact
+	mouseMoveAction
+	mouseCopyAction
+	mouseMergeAction
+	mousePathCopy
 	mouseEditorRow
 	mouseBook
 	mouseEmailMatch
@@ -20,8 +26,6 @@ const (
 	mouseDatePreviousMonth
 	mouseDateNextMonth
 	mouseDateNextYear
-	mouseDateToday
-	mouseDateClear
 )
 
 type mouseRect struct {
@@ -117,11 +121,26 @@ func moveDialogCursor(focus *dialogFocus, cursor *int, total, delta int, hasDele
 }
 
 func (m *model) updateMouse(event tea.MouseEvent) (tea.Model, tea.Cmd) {
-	if event.Button == tea.MouseButtonWheelUp {
-		return m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	}
-	if event.Button == tea.MouseButtonWheelDown {
-		return m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if event.Button == tea.MouseButtonWheelUp || event.Button == tea.MouseButtonWheelDown {
+		if (m.mode == modeList || m.mode == modeSearch) && m.mouse != nil {
+			for _, hit := range m.mouse.hits {
+				if event.X < hit.rect.x || event.X >= hit.rect.x+hit.rect.width ||
+					event.Y < hit.rect.y || event.Y >= hit.rect.y+hit.rect.height {
+					continue
+				}
+				switch hit.kind {
+				case mouseContactsPane:
+					m.focusedPane = paneContacts
+				case mouseDetailsPane:
+					m.focusedPane = paneDetails
+				}
+			}
+		}
+		key := tea.KeyDown
+		if event.Button == tea.MouseButtonWheelUp {
+			key = tea.KeyUp
+		}
+		return m.Update(tea.KeyMsg{Type: key})
 	}
 	if event.Action != tea.MouseActionPress || event.Button != tea.MouseButtonLeft || m.showHelp || m.mouse == nil {
 		return m, nil
@@ -130,28 +149,70 @@ func (m *model) updateMouse(event tea.MouseEvent) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	activeDialog := (m.mode == modeForm && (m.form.activeForm != nil || m.form.datePicker != nil)) ||
-		(m.mode == modeConflict && m.conflictForm != nil) ||
+	activeDialog := m.mode == modeForm || m.mode == modeConflict ||
 		m.mode == modeBooks || m.mode == modeConfirm || m.mode == modeEmailMatches
-	dateTarget := hit.kind >= mouseDateDay && hit.kind <= mouseDateClear
-	if activeDialog && hit.kind != mouseDialogAction && hit.kind != mouseBook && hit.kind != mouseEmailMatch && !dateTarget {
+	dateTarget := hit.kind >= mouseDateDay && hit.kind <= mouseDateNextYear
+	allowed := hit.kind == mouseDialogAction || dateTarget ||
+		m.mode == modeForm && hit.kind == mouseEditorRow ||
+		m.mode == modeBooks && hit.kind == mouseBook ||
+		m.mode == modeEmailMatches && hit.kind == mouseEmailMatch
+	if activeDialog && !allowed {
 		return m, nil
 	}
 
 	switch hit.kind {
+	case mouseContactsPane:
+		m.focusedPane = paneContacts
+	case mouseDetailsPane:
+		m.focusedPane = paneDetails
 	case mouseAddressbook:
+		m.focusedPane = paneContacts
 		m.cycleAddressbook(1)
 	case mouseContact:
 		if hit.index < 0 || hit.index >= len(m.visible) {
 			break
 		}
-		m.cursor = hit.index
 		if event.Ctrl {
-			contact := m.visible[hit.index]
-			m.selected[contact.Path] = !m.selected[contact.Path]
+			m.cursor = hit.index
+			m.focusedPane = paneContacts
+			entry := m.visible[hit.index]
+			m.selected[entry.Path] = !m.selected[entry.Path]
+			m.clamp()
 			break
 		}
-		m.startForm(&m.visible[hit.index], nil)
+		if hit.index == m.cursor && m.focusedPane == paneContacts {
+			m.focusedPane = paneDetails
+			m.detailScroll = 0
+			break
+		}
+		before := m.currentPath()
+		m.cursor = hit.index
+		m.focusedPane = paneContacts
+		m.clamp()
+		m.resetDetailsIfContactChanged(before)
+	case mouseMoveAction:
+		m.focusedPane = paneContacts
+		if m.canMove() {
+			m.startBookOperation(opMove)
+		}
+	case mouseCopyAction:
+		m.focusedPane = paneContacts
+		if m.canCopy() {
+			m.startBookOperation(opCopy)
+		}
+	case mouseMergeAction:
+		m.focusedPane = paneContacts
+		if m.canMerge() {
+			return m, m.startMerge()
+		}
+	case mousePathCopy:
+		if current := m.current(); current != nil && current.Path != "" {
+			m.focusedPane = paneDetails
+			m.pathCopyStatusID++
+			m.pathCopyValue = ""
+			m.pathCopyFailed = false
+			return m, copyPath(current.Path, m.pathCopyStatusID)
+		}
 	case mouseEditorRow:
 		rows := m.editorRows()
 		if hit.index < 0 || hit.index >= len(rows) || !selectableEditorRow(rows[hit.index]) {
@@ -171,7 +232,7 @@ func (m *model) updateMouse(event tea.MouseEvent) (tea.Model, tea.Cmd) {
 		}
 	case mouseDialogAction:
 		return m.activateMouseDialog(hit.focus)
-	case mouseDateDay, mouseDatePreviousYear, mouseDatePreviousMonth, mouseDateNextMonth, mouseDateNextYear, mouseDateToday, mouseDateClear:
+	case mouseDateDay, mouseDatePreviousYear, mouseDatePreviousMonth, mouseDateNextMonth, mouseDateNextYear:
 		if picker := m.form.datePicker; picker != nil {
 			switch hit.kind {
 			case mouseDateDay:
@@ -184,10 +245,6 @@ func (m *model) updateMouse(event tea.MouseEvent) (tea.Model, tea.Cmd) {
 				picker.moveMonth(1)
 			case mouseDateNextYear:
 				picker.moveMonth(12)
-			case mouseDateToday:
-				picker.selectDate(time.Now())
-			case mouseDateClear:
-				picker.clear()
 			}
 		}
 	}
