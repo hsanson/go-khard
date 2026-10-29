@@ -22,6 +22,16 @@ func TestEscapeQuitsContactList(t *testing.T) {
 		t.Fatalf("escape command returned %T, want tea.QuitMsg", msg)
 	}
 }
+func TestQQuitsDetailsPane(t *testing.T) {
+	m := &model{mode: modeList, focusedPane: paneDetails}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("q in Details did not return a quit command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("q in Details did not quit")
+	}
+}
 
 func TestBracketsCycleAddressbooksAndPreserveSearch(t *testing.T) {
 	one := config.Source{Path: "/tmp/one", Type: "addressbook", DisplayName: "One"}

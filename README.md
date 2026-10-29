@@ -111,7 +111,8 @@ through results. Press `enter` to keep the filter or `esc` to clear it.
 | `m` | move selected contacts |
 | `M` | merge two or more selected contacts |
 | `d` | delete selected contacts |
-| `q` / `esc` | return to Contacts from Details; quit from Contacts |
+| `q` | quit from Contacts or Details |
+| `esc` | return to Contacts from Details; quit from Contacts |
 | `?` | show shortcuts for the current screen |
 
 The Contacts pane shows Move, Copy, and Merge buttons when their selection

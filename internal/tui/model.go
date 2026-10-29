@@ -276,7 +276,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.focusedPane == paneDetails {
 		switch k.String() {
-		case "esc", "q", "h", "left":
+		case "q":
+			return m, tea.Quit
+		case "esc", "h", "left":
 			m.focusedPane = paneContacts
 		case "j", "down":
 			m.detailScroll++
@@ -977,7 +979,7 @@ func (m *model) shortcutsLegend() string {
 		return "[←/→] Change  [tab/↑/↓] Actions  [enter/space] Apply  [esc/q/ctrl+c] Cancel  [?] Help"
 	}
 	if m.focusedPane == paneDetails {
-		return "[h/esc/q] Contacts  [j/k ↑/↓] Scroll  [enter/e] Edit  [n] New  [tab/shift+tab] Pane  [?] Help"
+		return "[q] Exit  [h/esc] Contacts  [j/k ↑/↓] Scroll  [enter/e] Edit  [n] New  [tab/shift+tab] Pane  [?] Help"
 	}
 	legend := "[esc/q] Exit  [j/k ↑/↓] Move  [tab/shift+tab l] Details  [[/]] Addressbook  [/] Search  [e] Edit  [n] New  [space] Select  [?] Help"
 	if m.canCopy() {
@@ -1045,7 +1047,8 @@ func (m *model) helpLines() []string {
 	}
 	if m.focusedPane == paneDetails {
 		return []string{
-			"h, ←, esc, q      Return to Contacts",
+			"h, ←, esc         Return to Contacts",
+			"q                 Exit",
 			"j/k, ↑/↓          Scroll contact details",
 			"tab / shift-tab   Change pane",
 			"enter, e          Edit contact",
