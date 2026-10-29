@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +18,9 @@ const (
 	mouseCopyAction
 	mouseMergeAction
 	mousePathCopy
+	mouseDetailMail
+	mouseDetailOpen
+	mouseDetailCopy
 	mouseEditorRow
 	mouseBook
 	mouseEmailMatch
@@ -35,6 +39,7 @@ type mouseRect struct {
 type mouseHit struct {
 	rect  mouseRect
 	kind  mouseTarget
+	key   string
 	index int
 	focus dialogFocus
 	day   time.Time
@@ -208,11 +213,25 @@ func (m *model) updateMouse(event tea.MouseEvent) (tea.Model, tea.Cmd) {
 	case mousePathCopy:
 		if current := m.current(); current != nil && current.Path != "" {
 			m.focusedPane = paneDetails
-			m.pathCopyStatusID++
-			m.pathCopyValue = ""
-			m.pathCopyFailed = false
-			return m, copyPath(current.Path, m.pathCopyStatusID)
+			return m, m.startDetailAction(detailActionCopy, detailPathKey, 0, current.Path)
 		}
+	case mouseDetailMail, mouseDetailOpen, mouseDetailCopy:
+		current := m.current()
+		if current == nil || hit.index < 0 || hit.index >= len(current.Card[hit.key]) {
+			break
+		}
+		value := current.Card[hit.key][hit.index].Value
+		if strings.TrimSpace(value) == "" {
+			break
+		}
+		action := detailActionCopy
+		if hit.kind == mouseDetailMail {
+			action = detailActionMail
+		} else if hit.kind == mouseDetailOpen {
+			action = detailActionOpen
+		}
+		m.focusedPane = paneDetails
+		return m, m.startDetailAction(action, hit.key, hit.index, value)
 	case mouseEditorRow:
 		rows := m.editorRows()
 		if hit.index < 0 || hit.index >= len(rows) || !selectableEditorRow(rows[hit.index]) {

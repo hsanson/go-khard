@@ -1,6 +1,8 @@
 package contact
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -141,6 +143,131 @@ type Store struct{ Config *config.Config }
 
 func NewStore(cfg *config.Config) *Store { return &Store{Config: cfg} }
 
+type legacyVCardReader struct {
+	reader  *bufio.Reader
+	pending []byte
+	long    []byte
+	err     error
+}
+
+// go-vcard does not map vCard 2.1 bare type parameters and can consume the
+// field value as a parameter, so normalize typed properties while streaming.
+func newLegacyVCardReader(reader io.Reader) io.Reader {
+	return &legacyVCardReader{reader: bufio.NewReader(reader)}
+}
+
+func (r *legacyVCardReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	for len(r.pending) == 0 {
+		if r.err != nil {
+			return 0, r.err
+		}
+		line, err := r.readLine()
+		r.pending = normalizeLegacyTypeParameters(line)
+		r.err = err
+		if len(r.pending) == 0 && err != nil {
+			return 0, err
+		}
+	}
+	n := copy(p, r.pending)
+	r.pending = r.pending[n:]
+	return n, nil
+}
+
+func (r *legacyVCardReader) readLine() ([]byte, error) {
+	for {
+		chunk, err := r.reader.ReadSlice('\n')
+		if len(r.long) == 0 && err != bufio.ErrBufferFull {
+			return chunk, err
+		}
+		r.long = append(r.long, chunk...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		line := r.long
+		r.long = nil
+		return line, err
+	}
+}
+
+func normalizeLegacyTypeParameters(line []byte) []byte {
+	if len(line) == 0 || line[0] == ' ' || line[0] == '\t' {
+		return line
+	}
+	nameEnd, valueStart := -1, -1
+	quoted := false
+	for i, char := range line {
+		if char == '"' && (i == 0 || line[i-1] != '\\') {
+			quoted = !quoted
+		}
+		if quoted {
+			continue
+		}
+		if nameEnd < 0 && (char == ';' || char == ':') {
+			nameEnd = i
+		}
+		if char == ':' {
+			valueStart = i
+			break
+		}
+	}
+	if nameEnd < 0 || valueStart < 0 || line[nameEnd] == ':' {
+		return line
+	}
+	name := line[:nameEnd]
+	if dot := bytes.LastIndexByte(name, '.'); dot >= 0 {
+		name = name[dot+1:]
+	}
+	if !bytes.EqualFold(name, []byte(vcard.FieldEmail)) &&
+		!bytes.EqualFold(name, []byte(vcard.FieldTelephone)) &&
+		!bytes.EqualFold(name, []byte(vcard.FieldAddress)) {
+		return line
+	}
+
+	bareCount := 0
+	start, quoted := nameEnd+1, false
+	for i := start; i <= valueStart; i++ {
+		if i < valueStart && line[i] == '"' && (i == 0 || line[i-1] != '\\') {
+			quoted = !quoted
+		}
+		if i < valueStart && (line[i] != ';' || quoted) {
+			continue
+		}
+		value := bytes.TrimSpace(line[start:i])
+		if len(value) > 0 && bytes.IndexByte(value, '=') < 0 {
+			bareCount++
+		}
+		start = i + 1
+	}
+	if bareCount == 0 {
+		return line
+	}
+	normalized := make([]byte, 0, len(line)+len("TYPE=")*bareCount)
+	normalized = append(normalized, line[:nameEnd+1]...)
+	start, quoted = nameEnd+1, false
+	for i := start; i <= valueStart; i++ {
+		if i < valueStart && line[i] == '"' && (i == 0 || line[i-1] != '\\') {
+			quoted = !quoted
+		}
+		if i < valueStart && (line[i] != ';' || quoted) {
+			continue
+		}
+		value := line[start:i]
+		if trimmed := bytes.TrimSpace(value); len(trimmed) > 0 && bytes.IndexByte(trimmed, '=') < 0 {
+			normalized = append(normalized, "TYPE="...)
+			value = trimmed
+		}
+		normalized = append(normalized, value...)
+		if i < valueStart {
+			normalized = append(normalized, ';')
+		}
+		start = i + 1
+	}
+	return append(normalized, line[valueStart:]...)
+}
+
 func (s *Store) Load() ([]Contact, error) {
 	var out []Contact
 	for _, book := range s.Config.Addressbooks() {
@@ -160,7 +287,7 @@ func (s *Store) Load() ([]Contact, error) {
 			if err != nil {
 				return nil, err
 			}
-			dec := vcard.NewDecoder(f)
+			dec := vcard.NewDecoder(newLegacyVCardReader(f))
 			for {
 				card, decodeErr := dec.Decode()
 				if decodeErr == io.EOF {

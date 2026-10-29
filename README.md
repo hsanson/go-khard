@@ -23,14 +23,14 @@ Download the archive for your platform from the
 [GitHub releases page](https://github.com/hsanson/go-khard/releases).
 
 Release artifacts are named by version, operating system, and architecture. For
-example: `go-khard_v0.3.0_linux_amd64.tar.gz`,
-`go-khard_v0.3.0_darwin_arm64.tar.gz`, and
-`go-khard_v0.3.0_windows_amd64.zip`.
+example: `go-khard_v0.4.0_linux_amd64.tar.gz`,
+`go-khard_v0.4.0_darwin_arm64.tar.gz`, and
+`go-khard_v0.4.0_windows_amd64.zip`.
 
 Linux x86-64 example:
 
 ```sh
-export VERSION=0.3.0
+export VERSION=0.4.0
 curl -LO https://github.com/hsanson/go-khard/releases/download/v${VERSION}/go-khard_v${VERSION}_linux_amd64.tar.gz
 curl -LO https://github.com/hsanson/go-khard/releases/download/v${VERSION}/SHA256SUMS
 sha256sum -c SHA256SUMS --ignore-missing
@@ -90,8 +90,13 @@ platforms always use the built-in styles.
 
 The main workspace keeps contact names in the left pane and the selected
 contact's read-only details in the right pane. Details include the address book
-and every populated editor field. Notes wrap without truncation. The vCard path
-stays hidden; use its Copy button to copy it to the system clipboard.
+and every populated editor field. Email and postal-address labels show their
+vCard types in parentheses; untyped fields have no numeric suffix. Legacy
+vCard 2.1 bare types are loaded and written back as explicit `TYPE=`
+parameters. Email addresses provide Mail and Copy buttons, while webpages
+provide Open and Copy. Mail uses the system email handler, and Open sends HTTP
+or HTTPS URLs to the system browser. Notes wrap without truncation. The vCard
+path stays hidden; use its Copy button to copy it to the system clipboard.
 
 Press `/` to search names, email addresses, and phone numbers with fuzzy
 matching. While searching, use `ctrl-j`/`ctrl-k` or the arrow keys to move
@@ -143,8 +148,9 @@ press Enter again to apply the change. Invalid fields retain focus and show
 their validation error. Tab/down and shift-tab/up provide the same navigation.
 Select fields also use `j`/`k`, `h`/`l`, or left/right to change options. In
 the Note field, up/down moves the cursor and `ctrl-enter` inserts a newline.
-Action buttons remain on one row when they fit; Delete moves to a right-aligned
-second row only when the dialog is too narrow.
+When height is limited, the field list follows focus while action buttons stay
+visible. Buttons remain on one row when they fit; Delete moves to a
+right-aligned second row only when the dialog is too narrow.
 
 Birthday and Anniversary use a single-date calendar with keyboard and mouse
 navigation. The `‹`/`›` buttons move one month and `«`/`»` move one year;

@@ -2,6 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"net/url"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -13,25 +16,89 @@ import (
 	"github.com/hsanson/go-khard/internal/contact"
 )
 
-const pathCopyStatusDuration = 2 * time.Second
+const (
+	detailActionStatusDuration = 2 * time.Second
+	detailPathKey              = "path"
+)
 
-type pathCopiedMsg struct {
-	id   uint64
-	path string
-	err  error
+type detailAction uint8
+
+const (
+	detailActionNone detailAction = iota
+	detailActionMail
+	detailActionOpen
+	detailActionCopy
+)
+
+type detailActionStatus struct {
+	action       detailAction
+	key, value   string
+	index        int
+	done, failed bool
 }
 
-type pathCopyExpiredMsg struct{ id uint64 }
+type detailActionResultMsg struct {
+	id  uint64
+	err error
+}
 
-func copyPath(path string, id uint64) tea.Cmd {
+type detailActionExpiredMsg struct{ id uint64 }
+
+func runDetailAction(action detailAction, value string, id uint64) tea.Cmd {
 	return func() tea.Msg {
-		return pathCopiedMsg{id: id, path: path, err: clipboard.WriteAll(path)}
+		var err error
+		if action == detailActionCopy {
+			err = clipboard.WriteAll(value)
+		} else {
+			var target string
+			target, err = detailActionTarget(action, value)
+			if err == nil {
+				err = openSystemTarget(target)
+			}
+		}
+		return detailActionResultMsg{id: id, err: err}
 	}
 }
 
-func expirePathCopy(id uint64) tea.Cmd {
-	return tea.Tick(pathCopyStatusDuration, func(time.Time) tea.Msg {
-		return pathCopyExpiredMsg{id: id}
+func detailActionTarget(action detailAction, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	switch action {
+	case detailActionMail:
+		if err := validEmail(value); err != nil {
+			return "", err
+		}
+		return "mailto:" + value, nil
+	case detailActionOpen:
+		target, err := url.ParseRequestURI(value)
+		if err != nil {
+			return "", fmt.Errorf("invalid web page URL")
+		}
+		scheme := strings.ToLower(target.Scheme)
+		if target.Host == "" || scheme != "http" && scheme != "https" {
+			return "", fmt.Errorf("invalid web page URL")
+		}
+		return value, nil
+	default:
+		return "", fmt.Errorf("unsupported detail action")
+	}
+}
+
+func openSystemTarget(target string) error {
+	switch runtime.GOOS {
+	case "linux":
+		return exec.Command("xdg-open", target).Run()
+	case "darwin":
+		return exec.Command("open", target).Run()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", target).Run()
+	default:
+		return fmt.Errorf("opening links is unsupported on %s", runtime.GOOS)
+	}
+}
+
+func expireDetailAction(id uint64) tea.Cmd {
+	return tea.Tick(detailActionStatusDuration, func(time.Time) tea.Msg {
+		return detailActionExpiredMsg{id: id}
 	})
 }
 
@@ -42,11 +109,20 @@ func (m *model) currentPath() string {
 	return ""
 }
 
+func (m *model) clearDetailAction() {
+	m.detailActionStatusID++
+	m.detailStatus = detailActionStatus{}
+}
+
+func (m *model) startDetailAction(action detailAction, key string, index int, value string) tea.Cmd {
+	m.clearDetailAction()
+	m.detailStatus = detailActionStatus{action: action, key: key, index: index, value: value}
+	return runDetailAction(action, value, m.detailActionStatusID)
+}
+
 func (m *model) resetDetailState() {
 	m.detailScroll = 0
-	m.pathCopyStatusID++
-	m.pathCopyValue = ""
-	m.pathCopyFailed = false
+	m.clearDetailAction()
 }
 
 func (m *model) resetDetailsIfContactChanged(previous string) {
@@ -265,6 +341,13 @@ func (m *model) contactListView(width, height, x, y int) string {
 	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(strings.Join(lines[:min(len(lines), height)], "\n"))
 }
 
+type detailButtonHit struct {
+	line, x, width int
+	kind           mouseTarget
+	key            string
+	index          int
+}
+
 func (m *model) contactDetailsView(width, height, x, y int) string {
 	title := m.styles.PanelTitle.Render("Details")
 	current := m.current()
@@ -278,7 +361,8 @@ func (m *model) contactDetailsView(width, height, x, y int) string {
 		{key: "addressbook", label: "Addressbook", value: current.Book.Name()},
 	}
 	rows = append(rows, contactFieldRows(current.Card, false)...)
-	lines := make([]string, 0, len(rows)+4)
+	lines := make([]string, 0, len(rows)*2+4)
+	var buttons []detailButtonHit
 	for _, row := range rows {
 		if row.section {
 			if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
@@ -291,45 +375,114 @@ func (m *model) contactDetailsView(width, height, x, y int) string {
 			lines = append(lines, detailNoteLines(m.styles, row.value, width)...)
 			continue
 		}
+		switch row.key {
+		case vcard.FieldEmail:
+			row.label = detailLabel("Email", current.Card[row.key][row.index])
+		case vcard.FieldAddress:
+			row.label = detailLabel("Address", current.Card[row.key][row.index])
+		}
 		lines = append(lines, m.styles.detailLine("", row.label, row.value, width))
+		if actionLine, actionButtons := m.detailFieldActionLine(row, width); actionLine != "" {
+			for i := range actionButtons {
+				actionButtons[i].line = len(lines)
+			}
+			buttons = append(buttons, actionButtons...)
+			lines = append(lines, actionLine)
+		}
 	}
 
-	copyLine := -1
-	copyX := 0
-	copyWidth := 0
 	if current.Path != "" {
 		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
 			lines = append(lines, "")
 		}
 		lines = append(lines, m.styles.Accent.Render(sectionIcons["file"]+"  vCard file"))
-		copyLabel := " Copy"
-		copyStyle := m.styles.SecondaryButton
-		if m.pathCopyValue == current.Path {
-			if m.pathCopyFailed {
-				copyLabel = " Copy Failed"
-				copyStyle = m.styles.DangerButton
-			} else {
-				copyLabel = " Copied"
-			}
-		}
 		prefix := m.styles.detailPrefix("", "Path")
+		copyLabel, copyStyle := m.detailActionButton(detailActionCopy, detailPathKey, 0, current.Path, " Copy")
 		button := copyStyle.Render(copyLabel)
-		copyLine = len(lines)
-		copyX = lipgloss.Width(prefix)
-		copyWidth = lipgloss.Width(button)
+		buttons = append(buttons, detailButtonHit{
+			line:  len(lines),
+			x:     lipgloss.Width(prefix),
+			width: lipgloss.Width(button),
+			kind:  mousePathCopy,
+			key:   detailPathKey,
+		})
 		lines = append(lines, prefix+button)
 	}
 
 	bodyHeight := max(1, height-1)
 	m.detailScroll = min(m.detailScroll, max(0, len(lines)-bodyHeight))
-	if copyLine >= m.detailScroll && copyLine < m.detailScroll+bodyHeight {
+	for _, button := range buttons {
+		if button.line < m.detailScroll || button.line >= m.detailScroll+bodyHeight {
+			continue
+		}
 		m.addMouseHit(mouseHit{
-			rect: mouseRect{x: x + copyX, y: y + 1 + copyLine - m.detailScroll, width: copyWidth, height: 1},
-			kind: mousePathCopy,
+			rect:  mouseRect{x: x + button.x, y: y + 1 + button.line - m.detailScroll, width: button.width, height: 1},
+			kind:  button.kind,
+			key:   button.key,
+			index: button.index,
 		})
 	}
 	body := renderDetailLines(lines, m.detailScroll, bodyHeight)
 	return lipgloss.NewStyle().Width(width).Height(height).MaxHeight(height).Render(lipgloss.JoinVertical(lipgloss.Left, title, body))
+}
+
+func (m *model) detailFieldActionLine(row editorRow, width int) (string, []detailButtonHit) {
+	if strings.TrimSpace(row.value) == "" {
+		return "", nil
+	}
+	type action struct {
+		kind   mouseTarget
+		action detailAction
+		label  string
+	}
+	var actions []action
+	switch row.key {
+	case vcard.FieldEmail:
+		actions = []action{
+			{kind: mouseDetailMail, action: detailActionMail, label: "󰇮 Mail"},
+			{kind: mouseDetailCopy, action: detailActionCopy, label: " Copy"},
+		}
+	case vcard.FieldURL:
+		actions = []action{
+			{kind: mouseDetailOpen, action: detailActionOpen, label: "󰖟 Open"},
+			{kind: mouseDetailCopy, action: detailActionCopy, label: " Copy"},
+		}
+	default:
+		return "", nil
+	}
+
+	var line strings.Builder
+	var buttons []detailButtonHit
+	for _, action := range actions {
+		if line.Len() > 0 {
+			line.WriteString("  ")
+		}
+		buttonX := lipgloss.Width(line.String())
+		label, style := m.detailActionButton(action.action, row.key, row.index, row.value, action.label)
+		button := style.Render(label)
+		buttons = append(buttons, detailButtonHit{x: buttonX, width: lipgloss.Width(button), kind: action.kind, key: row.key, index: row.index})
+		line.WriteString(button)
+	}
+	indentWidth := min(lipgloss.Width(m.styles.detailPrefix("", row.label)), max(0, width-lipgloss.Width(line.String())))
+	for i := range buttons {
+		buttons[i].x += indentWidth
+	}
+	return strings.Repeat(" ", indentWidth) + line.String(), buttons
+}
+
+func (m *model) detailActionButton(action detailAction, key string, index int, value, label string) (string, lipgloss.Style) {
+	style := m.styles.SecondaryButton
+	status := m.detailStatus
+	if !status.done || status.action != action || status.key != key || status.index != index || status.value != value {
+		return label, style
+	}
+	if status.failed {
+		return label + " Failed", m.styles.DangerButton
+	}
+	if action == detailActionCopy {
+		return " Copied", style
+	}
+	return label, style
 }
 
 func (styles Styles) detailPrefix(glyph, label string) string {

@@ -262,6 +262,57 @@ func TestEditorAppliesStructuredAndTypedValues(t *testing.T) {
 	}
 }
 
+func TestTypedFieldEditsPreserveUnrelatedParameters(t *testing.T) {
+	card := make(vcard.Card)
+	card.Add(vcard.FieldEmail, &vcard.Field{
+		Value: "old@example.test",
+		Params: vcard.Params{
+			vcard.ParamType:      []string{"home"},
+			vcard.ParamPreferred: []string{"1"},
+			vcard.ParamPID:       []string{"1.1"},
+		},
+		Group: "item1",
+	})
+	card.Add(vcard.FieldAddress, &vcard.Field{
+		Value: ";;Old Street;Old City;Old Region;00000;Old Country",
+		Params: vcard.Params{
+			vcard.ParamType: []string{"home"},
+			"X-META":        []string{"keep"},
+		},
+		Group: "item2",
+	})
+	m := &model{form: formState{
+		card:      card,
+		activeRow: editorRow{key: vcard.FieldEmail},
+		tmp:       []string{"new@example.test"},
+		tmpTypes:  []string{"work"},
+	}}
+
+	m.applyEditorPopup()
+
+	field := m.form.card[vcard.FieldEmail][0]
+	if field.Value != "new@example.test" || field.Group != "item1" || !reflect.DeepEqual(field.Params.Types(), []string{"work"}) {
+		t.Fatalf("edited email = %#v", field)
+	}
+	if field.Params.Get(vcard.ParamPreferred) != "1" || field.Params.Get(vcard.ParamPID) != "1.1" {
+		t.Fatalf("edited email lost unrelated parameters: %#v", field.Params)
+	}
+
+	m.form.activeRow = editorRow{key: vcard.FieldAddress}
+	m.form.tmp = []string{"work", "", "", "New Street", "New City", "New Region", "11111", "New Country"}
+	m.form.tmpTypes = nil
+	m.applyEditorPopup()
+
+	field = m.form.card[vcard.FieldAddress][0]
+	if field.Value != ";;New Street;New City;New Region;11111;New Country" ||
+		field.Group != "item2" || !reflect.DeepEqual(field.Params.Types(), []string{"work"}) {
+		t.Fatalf("edited address = %#v", field)
+	}
+	if field.Params.Get("X-META") != "keep" {
+		t.Fatalf("edited address lost unrelated parameters: %#v", field.Params)
+	}
+}
+
 func TestTypedPopupPreservesMultipleAndUnknownTypes(t *testing.T) {
 	card := make(vcard.Card)
 	card.Add(vcard.FieldTelephone, &vcard.Field{
@@ -557,6 +608,54 @@ func TestFieldDialogOverlaysContactForm(t *testing.T) {
 	view := m.formView()
 	if !strings.Contains(view, "Roles") || !strings.Contains(view, "Apply") {
 		t.Fatalf("overlay does not retain the contact form and actions:\n%s", view)
+	}
+}
+
+func TestShortFieldDialogKeepsFocusedFieldsAndActionsVisible(t *testing.T) {
+	card := make(vcard.Card)
+	card.SetValue(vcard.FieldFormattedName, "Fixture")
+	card.Add(vcard.FieldAddress, &vcard.Field{
+		Value:  ";;1 Main Street;London;Region;00000;UK",
+		Params: vcard.Params{vcard.ParamType: []string{"home"}},
+	})
+	m := &model{
+		cfg: config.Default(), width: 80, height: 12, mode: modeForm,
+		styles: DefaultStyles(), mouse: &mouseState{}, form: formState{card: card},
+	}
+	rows := m.editorRows()
+	for i, row := range rows {
+		if row.key == vcard.FieldAddress && !row.add {
+			m.form.cursor = i
+			break
+		}
+	}
+	_ = m.openEditorPopup(rows)
+
+	for index, title := range []string{"Type", "Box", "Extended", "Street", "Code", "City", "Region", "Country"} {
+		m.mouse.reset()
+		view := ansi.Strip(m.formView())
+		if !strings.Contains(view, title) {
+			t.Fatalf("focused field %q is outside the short popup:\n%s", title, view)
+		}
+		for _, action := range []string{"Apply", "Cancel", "Delete"} {
+			if !strings.Contains(view, action) {
+				t.Fatalf("%s is outside the short popup while %q is focused:\n%s", action, title, view)
+			}
+		}
+		for _, hit := range m.mouse.hits {
+			if hit.kind == mouseDialogAction && (hit.rect.y < 0 || hit.rect.y >= lipgloss.Height(view)) {
+				t.Fatalf("action mouse target is outside the short popup: %#v\n%s", hit, view)
+			}
+		}
+		if index < m.form.dialogFields-1 {
+			var updated tea.Model
+			if index == 0 {
+				updated, _ = m.updateMouse(tea.MouseEvent{Button: tea.MouseButtonWheelDown})
+			} else {
+				updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+			}
+			m = updated.(*model)
+		}
 	}
 }
 

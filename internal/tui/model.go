@@ -114,9 +114,8 @@ type model struct {
 	styles                        Styles
 	formTheme                     *huh.Theme
 	themeMonitor                  *themeMonitor
-	pathCopyValue                 string
-	pathCopyFailed                bool
-	pathCopyStatusID              uint64
+	detailStatus                  detailActionStatus
+	detailActionStatusID          uint64
 }
 
 func Run(store *contact.Store, cfg *config.Config) error {
@@ -200,20 +199,23 @@ func (m *model) ensureTheme() {
 func (m *model) Init() tea.Cmd { return m.themeMonitor.wait() }
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case pathCopiedMsg:
-		if msg.id != m.pathCopyStatusID {
+	case detailActionResultMsg:
+		if msg.id != m.detailActionStatusID {
 			return m, nil
 		}
-		m.pathCopyValue = msg.path
-		m.pathCopyFailed = msg.err != nil
+		m.detailStatus.done = true
+		m.detailStatus.failed = msg.err != nil
 		if msg.err != nil {
 			return m, nil
 		}
-		return m, expirePathCopy(msg.id)
-	case pathCopyExpiredMsg:
-		if msg.id == m.pathCopyStatusID {
-			m.pathCopyValue = ""
-			m.pathCopyFailed = false
+		if m.detailStatus.action != detailActionCopy {
+			m.detailStatus = detailActionStatus{}
+			return m, nil
+		}
+		return m, expireDetailAction(msg.id)
+	case detailActionExpiredMsg:
+		if msg.id == m.detailActionStatusID {
+			m.detailStatus = detailActionStatus{}
 		}
 		return m, nil
 	case themeStylesMsg:
@@ -639,13 +641,17 @@ func renderActionRows(actions []dialogAction, focus dialogFocus, width int, styl
 	return strings.Join(rows, "\n"), hits
 }
 
-func dialogWithActions(content string, actions []dialogAction, focus dialogFocus, width int, styles Styles) (string, []mouseHit) {
-	row, hits := renderActionRows(actions, focus, width, styles)
+func joinDialogActions(content, row string, hits []mouseHit) (string, []mouseHit) {
 	y := lipgloss.Height(content) + 1
 	for i := range hits {
 		hits[i].rect.y += y
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, content, "", row), hits
+}
+
+func dialogWithActions(content string, actions []dialogAction, focus dialogFocus, width int, styles Styles) (string, []mouseHit) {
+	row, hits := renderActionRows(actions, focus, width, styles)
+	return joinDialogActions(content, row, hits)
 }
 
 func (m *model) addOffsetMouseHits(hits []mouseHit, x, y int) {
@@ -722,7 +728,7 @@ func (m *model) conflictView() string {
 		return ""
 	}
 	progress := m.styles.Subtle.Render(fmt.Sprintf("Conflict %d of %d", m.conflictCursor+1, len(m.conflicts)))
-	form := editorPopupView(m.conflictForm, dialogBodyWidth(m.width))
+	form := m.conflictForm.WithWidth(dialogBodyWidth(m.width)).WithShowHelp(false).WithShowErrors(true).View()
 	content := lipgloss.JoinVertical(lipgloss.Left, m.styles.Accent.Render("Resolve merge conflicts"), progress, "", form)
 	content, hits := dialogWithActions(content, []dialogAction{
 		{label: "Apply", focus: dialogFocusPrimary},
@@ -880,6 +886,17 @@ func (m *model) formView() string {
 		return base
 	}
 	popupWidth := dialogBodyWidth(m.width)
+	actions := []dialogAction{
+		{label: "Apply", focus: dialogFocusPrimary},
+		{label: "Cancel", focus: dialogFocusCancel},
+	}
+	if m.form.datePicker != nil {
+		actions = append(actions, dialogAction{label: "Clear", focus: dialogFocusDelete, destructive: true})
+	} else if m.editorDialogHasDelete() {
+		actions = append(actions, dialogAction{label: "Delete", focus: dialogFocusDelete, destructive: true})
+	}
+	actionRows, actionHits := renderActionRows(actions, m.form.dialogFocus, popupWidth, m.styles)
+
 	var content string
 	var hits []mouseHit
 	if m.form.datePicker != nil {
@@ -891,18 +908,11 @@ func (m *model) formView() string {
 		content = lipgloss.NewStyle().Width(popupWidth).MaxWidth(popupWidth).Render(content)
 		hits = pickerHits
 	} else {
-		content = editorPopupView(m.form.activeForm, popupWidth)
+		overlayFrameHeight := lipgloss.Height(m.styles.Overlay.Render(""))
+		formHeight := max(1, m.mainHeight()-overlayFrameHeight-1-lipgloss.Height(actionRows))
+		content = editorPopupView(m.form.activeForm, popupWidth, formHeight)
 	}
-	actions := []dialogAction{
-		{label: "Apply", focus: dialogFocusPrimary},
-		{label: "Cancel", focus: dialogFocusCancel},
-	}
-	if m.form.datePicker != nil {
-		actions = append(actions, dialogAction{label: "Clear", focus: dialogFocusDelete, destructive: true})
-	} else if m.editorDialogHasDelete() {
-		actions = append(actions, dialogAction{label: "Delete", focus: dialogFocusDelete, destructive: true})
-	}
-	content, actionHits := dialogWithActions(content, actions, m.form.dialogFocus, popupWidth, m.styles)
+	content, actionHits = joinDialogActions(content, actionRows, actionHits)
 	return m.overlayDialog(base, content, append(hits, actionHits...))
 }
 
@@ -1100,9 +1110,9 @@ func (m *model) renderHelpOverlay(height int) string {
 	return lipgloss.Place(m.width, height, lipgloss.Center, lipgloss.Center, box)
 }
 
-func editorPopupView(form *huh.Form, width int) string {
+func editorPopupView(form *huh.Form, width, height int) string {
 	if form == nil {
 		return ""
 	}
-	return form.WithWidth(max(1, width)).WithShowHelp(false).WithShowErrors(true).View()
+	return form.WithWidth(max(1, width)).WithHeight(max(1, height)).WithShowHelp(false).WithShowErrors(true).View()
 }

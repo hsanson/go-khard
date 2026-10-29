@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net/mail"
 	"sort"
 	"strings"
@@ -551,6 +552,11 @@ func (m *model) applyEditorPopup() {
 		return
 	}
 	field := &vcard.Field{}
+	if !row.add && (row.key == vcard.FieldTelephone || row.key == vcard.FieldEmail || row.key == vcard.FieldAddress) {
+		existing := m.form.card[row.key][row.index]
+		field.Group = existing.Group
+		field.Params = maps.Clone(existing.Params)
+	}
 	switch row.key {
 	case vcard.FieldTelephone, vcard.FieldEmail:
 		field.Value = strings.TrimSpace(m.form.tmp[0])
@@ -745,6 +751,14 @@ func indexedLabel(label string, field *vcard.Field, index int) string {
 	}
 	return fmt.Sprintf("%s %d", label, index+1)
 }
+
+func detailLabel(label string, field *vcard.Field) string {
+	types := normalizedTypes(field.Params.Types())
+	if len(types) == 0 {
+		return label
+	}
+	return fmt.Sprintf("%s (%s)", label, strings.Join(types, ", "))
+}
 func privateKeys(card vcard.Card) []string {
 	var keys []string
 	for key := range card {
@@ -756,11 +770,24 @@ func privateKeys(card vcard.Card) []string {
 	return keys
 }
 func setFieldType(field *vcard.Field, typ string) {
+	delete(field.Params, vcard.ParamType)
 	if typ = strings.TrimSpace(typ); typ != "" {
-		field.Params = vcard.Params{vcard.ParamType: []string{typ}}
+		if field.Params == nil {
+			field.Params = make(vcard.Params)
+		}
+		field.Params[vcard.ParamType] = []string{typ}
 	}
 }
 func setFieldTypes(field *vcard.Field, types []string) {
+	delete(field.Params, vcard.ParamType)
+	if values := normalizedTypes(types); len(values) > 0 {
+		if field.Params == nil {
+			field.Params = make(vcard.Params)
+		}
+		field.Params[vcard.ParamType] = values
+	}
+}
+func normalizedTypes(types []string) []string {
 	var values []string
 	for _, typ := range types {
 		typ = strings.ToLower(strings.TrimSpace(typ))
@@ -768,9 +795,7 @@ func setFieldTypes(field *vcard.Field, types []string) {
 			values = append(values, typ)
 		}
 	}
-	if len(values) > 0 {
-		field.Params = vcard.Params{vcard.ParamType: values}
-	}
+	return values
 }
 func removeField(fields []*vcard.Field, index int) []*vcard.Field {
 	if index < 0 || index >= len(fields) {
